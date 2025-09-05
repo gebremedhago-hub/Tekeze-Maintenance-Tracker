@@ -1,7 +1,4 @@
-
-      1 import streamlit as st
-      2 import bcrypt
-  ❱   3 import firebase_admin
-      4 from firebase_admin import credentials, firestore
-      5 import json
-      6 from datetime import datetime
+streamlit
+bcrypt
+firebase-admin
+pandas
