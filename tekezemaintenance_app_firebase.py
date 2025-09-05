@@ -15,6 +15,8 @@ if 'logged_in' not in st.session_state:
     st.session_state['logged_in'] = False
 if 'user' not in st.session_state:
     st.session_state['user'] = None
+if 'db' not in st.session_state:
+    st.session_state['db'] = None
 
 # --- Firebase Setup ---
 
@@ -27,10 +29,14 @@ def initialize_firebase():
             cred = credentials.Certificate(firebase_config)
             firebase_admin.initialize_app(cred)
             st.session_state.db = firestore.client()
+            return True
+        return True # App is already initialized
     except KeyError:
         st.error("Firebase configuration not found. Please ensure 'firebase_config' is set in Streamlit Secrets.")
+        return False
     except Exception as e:
         st.error(f"Error initializing Firebase: {e}")
+        return False
 
 # --- User Authentication Functions ---
 
@@ -38,7 +44,7 @@ def login_user(username, password):
     """
     Authenticates a user against the Firestore database.
     """
-    if 'db' not in st.session_state:
+    if not st.session_state.db:
         st.error("Database connection not ready. Please refresh the page.")
         return False
 
@@ -48,7 +54,6 @@ def login_user(username, password):
     if user_doc.exists:
         user_data = user_doc.to_dict()
         hashed_password = user_data.get('password')
-        # Check if password exists before trying to decode
         if hashed_password and bcrypt.checkpw(password.encode('utf-8'), hashed_password.encode('utf-8')):
             st.session_state.logged_in = True
             st.session_state.user = user_data
@@ -57,7 +62,7 @@ def login_user(username, password):
 
 def register_user(username, password, first_name, last_name, user_type):
     """Registers a new user in the Firestore database."""
-    if 'db' not in st.session_state:
+    if not st.session_state.db:
         st.error("Database connection not ready. Please refresh the page.")
         return False
 
@@ -250,7 +255,8 @@ def show_login_signup():
         new_user_type = st.sidebar.selectbox("User Type", ["Maintenance Staff", "Operator", "Manager"])
         if st.sidebar.button("Create Account"):
             try:
-                register_user(new_user, new_pass, new_first_name, new_last_name, new_user_type)
+                if register_user(new_user, new_pass, new_first_name, new_last_name, new_user_type):
+                    st.rerun()
             except Exception as e:
                 st.error(f"Registration failed: {e}")
 
@@ -356,7 +362,7 @@ def show_report_form():
 def show_my_reports(username):
     """Displays a table of the user's submitted reports."""
     st.subheader("My Reports")
-    if 'db' not in st.session_state:
+    if not st.session_state.db:
         st.error("Database connection not ready. Please refresh the page.")
         return
         
@@ -373,7 +379,7 @@ def show_my_reports(username):
 def show_manager_dashboard():
     """Displays the manager dashboard with all reports and efficiency metrics."""
     st.subheader("All Reports (Manager Dashboard)")
-    if 'db' not in st.session_state:
+    if not st.session_state.db:
         st.error("Database connection not ready. Please refresh the page.")
         return
     
@@ -442,9 +448,12 @@ def main():
         st.subheader("Maintenance Tracker")
 
     st.markdown("---")
-
-    initialize_firebase()
     
+    with st.spinner("Connecting to the database..."):
+        if not initialize_firebase():
+            st.error("Failed to connect to the database. Please check your Firebase configuration in Streamlit secrets.")
+            return # Stop the app if initialization fails
+
     if not st.session_state.logged_in:
         show_login_signup()
     else:
