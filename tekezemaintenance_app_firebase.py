@@ -1,381 +1,457 @@
 import streamlit as st
-import bcrypt
 import firebase_admin
 from firebase_admin import credentials, firestore
-import json
-from datetime import datetime
-import uuid
-import os
+import bcrypt
 import pandas as pd
+import json
+import datetime
+import math
 
-# --- Firebase Initialization ---
+# Initialize Streamlit session state
+
+if 'page' not in st.session_state:
+    st.session_state['page'] = 'home'
+if 'logged_in' not in st.session_state:
+    st.session_state['logged_in'] = False
+if 'user' not in st.session_state:
+    st.session_state['user'] = None
+
+# --- Firebase Setup ---
+
 def initialize_firebase():
-    if not firebase_admin._apps:
-        try:
-            if os.path.exists("firebase_config.json"):
-                with open("firebase_config.json") as f:
-                    firebase_config = json.load(f)
-                cred = credentials.Certificate(firebase_config)
-                firebase_admin.initialize_app(cred)
-                st.session_state.db = firestore.client()
-                return True
-            elif "firebase_config" in st.secrets:
-                cred = credentials.Certificate(st.secrets["firebase_config"])
-                firebase_admin.initialize_app(cred)
-                st.session_state.db = firestore.client()
-                return True
-            else:
-                st.error("Firebase configuration not found. Please set `firebase_config.json` locally or set the `firebase_config` secret.")
-                return False
-        except Exception as e:
-            st.error(f"Error initializing Firebase: {e}")
-            st.info("Please ensure your Firebase configuration is correctly set up.")
-            return False
-    return True
+    """Initializes Firebase credentials from Streamlit secrets."""
+    try:
+        if not firebase_admin._apps:
+            # Use Streamlit's secrets management for Firebase config
+            firebase_config = st.secrets["firebase_config"]
+            cred = credentials.Certificate(firebase_config)
+            firebase_admin.initialize_app(cred)
+            st.session_state.db = firestore.client()
+    except KeyError:
+        st.error("Firebase configuration not found. Please ensure 'firebase_config' is set in Streamlit Secrets.")
+    except Exception as e:
+        st.error(f"Error initializing Firebase: {e}")
 
-if initialize_firebase():
-    st.session_state.authenticated = True
-else:
-    st.session_state.authenticated = False
-
-
-# --- Firebase Functions ---
-def add_user(username, password):
-    hashed_password = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt())
-    user_ref = st.session_state.db.collection('users').document(username)
-    user_ref.set({
-        'username': username,
-        'password': hashed_password.decode('utf-8')
-    })
-    return True
+# --- User Authentication Functions ---
 
 def login_user(username, password):
+    """
+    Authenticates a user against the Firestore database.
+    """
+    if 'db' not in st.session_state:
+        st.error("Database connection not ready. Please refresh the page.")
+        return False
+
     user_ref = st.session_state.db.collection('users').document(username)
     user_doc = user_ref.get()
 
     if user_doc.exists:
         user_data = user_doc.to_dict()
-        stored_password = user_data['password'].encode('utf-8')
-        if bcrypt.checkpw(password.encode('utf-8'), stored_password):
+        hashed_password = user_data.get('password')
+        # Check if password exists before trying to decode
+        if hashed_password and bcrypt.checkpw(password.encode('utf-8'), hashed_password.encode('utf-8')):
+            st.session_state.logged_in = True
+            st.session_state.user = user_data
             return True
     return False
 
-def insert_report(report_data):
-    reports_ref = st.session_state.db.collection('reports')
-    reports_ref.add({
-        **report_data,
-        'timestamp': datetime.utcnow()
-    })
+def register_user(username, password, first_name, last_name, user_type):
+    """Registers a new user in the Firestore database."""
+    if 'db' not in st.session_state:
+        st.error("Database connection not ready. Please refresh the page.")
+        return False
+
+    hashed_password = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+    user_data = {
+        'username': username,
+        'password': hashed_password,
+        'first_name': first_name,
+        'last_name': last_name,
+        'user_type': user_type
+    }
+    user_ref = st.session_state.db.collection('users').document(username)
+    user_ref.set(user_data)
+    st.success("Registration successful! Please log in.")
     return True
 
-def get_reports():
-    reports_ref = st.session_state.db.collection('reports')
-    all_reports = reports_ref.order_by('timestamp', direction=firestore.Query.DESCENDING).stream()
-    reports_list = [report.to_dict() for report in all_reports]
-    return reports_list
+# --- Data Handling Functions for Firestore ---
 
-def calculate_dynamic_weights(reports):
-    """Calculates the dynamic weight for each report based on its total resources."""
-    if not reports:
-        return []
-
-    # Calculate total resource sum for all completed tasks
-    total_resource_sum = 0
-    for report in reports:
-        if report.get('status') == "Completed" and 'planned_manpower' in report:
-            try:
-                resource_sum = report.get('planned_manpower', 0) + report.get('planned_time', 0) + report.get('planned_activities', 0)
-                total_resource_sum += resource_sum
-            except (ValueError, TypeError):
-                continue
-    
-    if total_resource_sum == 0:
-        return reports
-
-    # Calculate weight for each report
-    updated_reports = []
-    for report in reports:
-        if report.get('status') == "Completed" and 'planned_manpower' in report:
-            try:
-                resource_sum = report.get('planned_manpower', 0) + report.get('planned_time', 0) + report.get('planned_activities', 0)
-                report['given_weight'] = (resource_sum / total_resource_sum) * 100
-            except (ValueError, TypeError):
-                report['given_weight'] = 0
-        updated_reports.append(report)
-        
-    return updated_reports
-
-def calculate_adjusted_metric(planned, actual):
-    """Calculates adjusted metric based on punishment/reward formula."""
-    if planned == 0:
-        return actual
-    diff = abs(actual - planned)
-    if actual > planned:
-        # Punishment
-        return actual - diff * (1 + diff / planned)
-    else:
-        # Reward
-        return actual + diff * (1 + diff / planned)
-
-# --- Streamlit UI ---
-st.set_page_config(layout="wide", page_title="Tekeze Maintenance Tracker")
-
-if 'username' not in st.session_state:
-    st.session_state.username = None
-if 'logged_in' not in st.session_state:
-    st.session_state.logged_in = False
-if 'db' not in st.session_state:
-    st.session_state.db = None
-if 'authenticated' not in st.session_state:
-    st.session_state.authenticated = False
-
-# Title and Logo section
-col_dam, col_title = st.columns([2, 4])
-with col_dam:
+def insert_report(data):
+    """Inserts a new maintenance report into the Firestore database."""
     try:
-        st.image("dam.jpg", width=300)
-    except FileNotFoundError:
-        st.warning("dam.jpg not found. Using a placeholder image.")
-        st.image("https://placehold.co/600x200/A1C4FD/ffffff?text=Dam+Image", width=300)
-with col_title:
-    st.markdown("<h1 style='text-align: center; color: #1E90FF;'>Tekeze Maintenance Tracker</h1>", unsafe_allow_html=True)
-st.markdown("<hr style='border: 2px solid #1E90FF;'>", unsafe_allow_html=True)
+        st.session_state.db.collection('maintenance_reports').add(data)
+        return True
+    except Exception as e:
+        st.error(f"Failed to submit report: {e}")
+        return False
 
-# Main app logic
-if st.session_state.logged_in:
-    # Developer info at the top right of the sidebar
-    with st.sidebar:
-        try:
-            st.sidebar.image("developer.jpg", width=100)
-        except FileNotFoundError:
-            st.sidebar.warning("developer.jpg not found.")
-            st.sidebar.image("https://placehold.co/150x150/A1C4FD/ffffff?text=Gebremedhin+Hagos", width=100)
-        st.markdown("<p style='text-align: center;'><b>Developed by:</b> Gebremedhin Hagos</p>", unsafe_allow_html=True)
-        st.markdown("<hr>", unsafe_allow_html=True)
-        
-    st.sidebar.header(f"Welcome, {st.session_state.username}")
-    if st.sidebar.button("Logout"):
-        st.session_state.logged_in = False
-        st.session_state.username = None
-        st.rerun()
+def update_report(report_id, planned_manpower, planned_time):
+    """Updates planned manpower and time for a specific report in Firestore."""
+    try:
+        report_ref = st.session_state.db.collection('maintenance_reports').document(report_id)
+        report_ref.update({
+            'planned_manpower': planned_manpower,
+            'planned_time': planned_time
+        })
+        return True
+    except Exception as e:
+        st.error(f"Failed to update report: {e}")
+        return False
 
-    st.header("Submit New Maintenance Report")
-    
-    with st.form("maintenance_form"):
-        unique_id = str(uuid.uuid4())[:8]
-        report_id = st.text_input("Report ID (Auto-generated)", value=f"TKZ-{unique_id}", disabled=True)
-        device_name = st.text_input("Device Name", help="e.g., HVAC Unit 3, Server Rack 5")
-        
-        # Updated fields with new options
-        functional_location_options = ["powerhouse", "dam", "Switch Yard", "Access road", "Garage", "Dwelling", "others"]
-        functional_location = st.selectbox("Functional Location", options=functional_location_options)
-        
-        specific_location_options = ["unit 1", "unit 2", "unit 3", "unit 4", "common system", "spillway", "intake gate", "trash rack crane", "diesel generator", "bonnet gate", "substation", "SYD control room", "step down transformer", "water supply", "road", "employee camp", "China camp", "wanboo camp", "garage", "others"]
-        specific_location = st.selectbox("Specific Location", options=specific_location_options)
-
-        # New field: Maintenance Type
-        maintenance_type_options = ["inspection", "preventive maintenance", "breakdown/emergency/corrective"]
-        maintenance_type = st.selectbox("Maintenance Type", options=maintenance_type_options)
-        
-        col_issue, col_priority, col_status, col_safety = st.columns(4)
-        with col_issue:
-            issue_type = st.selectbox("Type of Issue", ["Mechanical", "Electrical", "Software", "Network", "Other"])
-        with col_priority:
-            priority = st.radio("Priority", ["Low", "Medium", "High"], horizontal=True)
-        with col_status:
-            status_options = ["fully functional", "functional but need monitoring", "temporarily functional( risk present)", "unfunctional"]
-            status = st.selectbox("Status", options=status_options)
-        with col_safety:
-            safety_condition_options = ["Safely accomplished", "sign of unsafe environment observed", "maintenance platform was not safe", "totally unsafe"]
-            safety_condition = st.selectbox("Safety Condition", options=safety_condition_options)
-
-        description = st.text_area("Description of the Problem", help="Provide a detailed description of the issue.")
-        conditions_observed = st.text_area("Conditions Observed", help="What were the conditions when the issue was found?")
-        diagnosis_undertaken = st.text_area("Diagnosis Undertaken", help="How was the issue diagnosed?")
-        action_taken = st.text_area("Action Taken", help="What actions were taken to resolve the issue?")
-        personnel_participated = st.text_area("Personnel Participated", help="List the names of personnel involved.")
-        
-        # --- Planned Activities Field (accessible to all) ---
-        planned_activities = st.number_input("Planned Activities", min_value=0, step=1, help="Number of activities planned for this task.")
-        
-        # --- New fields for all reporters ---
-        actual_manpower = st.number_input("Actual Manpower Used", min_value=0, step=1)
-        actual_time = st.number_input("Actual Time Used (hours)", min_value=0.0)
-        actual_activities = st.number_input("Actual Activities Done", min_value=0, step=1)
-
-
-        # --- Manager-specific fields ---
-        planned_manpower, planned_time = 0, 0
-        
-        if st.session_state.username == 'seyoum.h':
-            st.markdown("---")
-            st.subheader("Manager-Only Fields")
-            col_p1, col_p2 = st.columns(2)
-            with col_p1:
-                planned_manpower = st.number_input("Planned Manpower", min_value=0, step=1, help="Manager-only field.")
-            with col_p2:
-                planned_time = st.number_input("Planned Time (hours)", min_value=0.0, help="Manager-only field.")
-            
-        # --- File Upload Section (Conceptual) ---
-        st.markdown("---")
-        st.subheader("Attach Files")
-        st.info("Note: File uploads require a separate backend service like Firebase Storage to persist. The Streamlit component below is for demonstration.")
-        # uploaded_file = st.file_uploader("Upload a file")
-        # if uploaded_file is not None:
-        #    # This is where you would write the logic to upload the file
-        #    # to Firebase Storage using the Firebase Storage SDK.
-        #    st.success("File upload component is ready.")
-
-        reported_by = st.text_input("Reported By", value=st.session_state.username, disabled=True)
-        
-        submitted = st.form_submit_button("Submit Report")
-        
-        if submitted:
-            if not all([device_name, functional_location, specific_location, issue_type, priority, status, safety_condition, description, conditions_observed, diagnosis_undertaken, action_taken, personnel_participated, planned_activities]):
-                st.error("Please fill in all the required fields.")
-            else:
-                report_data = {
-                    "id": report_id,
-                    "device_name": device_name,
-                    "functional_location": functional_location,
-                    "specific_location": specific_location,
-                    "maintenance_type": maintenance_type, # New field
-                    "issue_type": issue_type,
-                    "description": description,
-                    "priority": priority,
-                    "status": status,
-                    "safety_condition": safety_condition,
-                    "conditions_observed": conditions_observed,
-                    "diagnosis_undertaken": diagnosis_undertaken,
-                    "action_taken": action_taken,
-                    "personnel_participated": personnel_participated,
-                    "reported_by": reported_by,
-                    "planned_activities": planned_activities,
-                    "actual_manpower": actual_manpower, # New field for all reporters
-                    "actual_time": actual_time, # New field for all reporters
-                    "actual_activities": actual_activities # New field for all reporters
-                }
-                
-                if st.session_state.username == 'seyoum.h':
-                    report_data["planned_manpower"] = planned_manpower
-                    report_data["planned_time"] = planned_time
-                    
-                    if status == "Completed":
-                        # Apply custom efficiency formulas
-                        adj_manpower = calculate_adjusted_metric(planned_manpower, report_data.get('actual_manpower', 0))
-                        adj_time = calculate_adjusted_metric(planned_time, report_data.get('actual_time', 0))
-                        adj_activities = report_data.get('actual_activities', 0)
-
-                        total_planned_resources = planned_manpower + planned_time + planned_activities
-                        total_actual_resources = adj_manpower + adj_time + adj_activities
-                        
-                        if total_planned_resources > 0:
-                            performance_score = (total_actual_resources / total_planned_resources) * 100
-                            report_data["performance_score"] = f"{performance_score:.2f}%"
-                        else:
-                            report_data["performance_score"] = "Calculation Error: Planned resources sum is zero."
-
-                if insert_report(report_data):
-                    st.success("Report submitted successfully!")
-                    st.rerun()
-                else:
-                    st.error("Failed to submit report.")
-
-    st.markdown("<hr>", unsafe_allow_html=True)
-    st.header("Recent Maintenance Reports")
-    
-    reports = get_reports()
-    
-    # Calculate and add dynamic weights for display
-    reports_with_weights = calculate_dynamic_weights(reports)
-    
-    if reports_with_weights:
-        # Create a DataFrame to export
-        df = pd.DataFrame(reports_with_weights)
-        
-        # Reorder columns to place performance metrics at the end
-        metrics_cols = ['given_weight', 'performance_score']
-        other_cols = [col for col in df.columns if col not in metrics_cols]
-        new_order = other_cols + metrics_cols
-        
-        df = df.reindex(columns=new_order)
-        
-        col_view, col_export = st.columns([4,1])
-        with col_export:
-            st.download_button(
-                label="Export Reports to CSV",
-                data=df.to_csv(index=False).encode('utf-8'),
-                file_name='maintenance_reports.csv',
-                mime='text/csv',
-                help="Download all reports as a CSV file"
-            )
-
-        for report in reports_with_weights:
-            with st.expander(f"Report ID: {report['id']} - Device: {report['device_name']}"):
-                st.write(f"**Functional Location:** {report.get('functional_location', 'N/A')}")
-                st.write(f"**Specific Location:** {report.get('specific_location', 'N/A')}")
-                st.write(f"**Maintenance Type:** {report.get('maintenance_type', 'N/A')}") # New field display
-                st.write(f"**Issue Type:** {report.get('issue_type', 'N/A')}")
-                st.write(f"**Priority:** {report.get('priority', 'N/A')}")
-                st.write(f"**Status:** {report.get('status', 'N/A')}")
-                st.write(f"**Safety Condition:** {report.get('safety_condition', 'N/A')}")
-                st.write(f"**Description:** {report.get('description', 'N/A')}")
-                st.write(f"**Conditions Observed:** {report.get('conditions_observed', 'N/A')}")
-                st.write(f"**Diagnosis Undertaken:** {report.get('diagnosis_undertaken', 'N/A')}")
-                st.write(f"**Action Taken:** {report.get('action_taken', 'N/A')}")
-                st.write(f"**Personnel Participated:** {report.get('personnel_participated', 'N/A')}")
-
-                # Display fields for all reports
-                st.write(f"**Planned Activities:** {report.get('planned_activities', 'N/A')}")
-                st.write(f"**Actual Manpower:** {report.get('actual_manpower', 'N/A')}")
-                st.write(f"**Actual Time (hours):** {report.get('actual_time', 'N/A')}")
-                st.write(f"**Actual Activities:** {report.get('actual_activities', 'N/A')}")
-
-                # Display dynamic weights and performance score
-                if "given_weight" in report:
-                    st.markdown("---")
-                    st.write(f"**Planned Manpower:** {report.get('planned_manpower', 'N/A')}")
-                    st.write(f"**Planned Time (hours):** {report.get('planned_time', 'N/A')}")
-                    
-                    st.write(f"**Given Weight:** {report.get('given_weight', 0):.2f}%")
-                    st.write(f"**Performance Score:** {report.get('performance_score', 'N/A')}")
-                
-                st.write(f"**Reported By:** {report.get('reported_by', 'N/A')}")
-                st.write(f"**Submitted On:** {report.get('timestamp', datetime.now()).strftime('%Y-%m-%d %H:%M:%S')}")
+def get_reports(username=None):
+    """Fetches reports from the Firestore database. Fetches all if username is None."""
+    reports_ref = st.session_state.db.collection('maintenance_reports')
+    if username:
+        query = reports_ref.where('reporter', '==', username).order_by('report_date', direction=firestore.Query.DESCENDING)
     else:
-        st.info("No reports found.")
+        query = reports_ref.order_by('report_date', direction=firestore.Query.DESCENDING)
 
-else:
-    # Login/Register page
-    st.header("Login or Register")
-    col1, col2 = st.columns(2)
+    reports_list = []
+    for doc in query.stream():
+        report = doc.to_dict()
+        report['id'] = doc.id
+        reports_list.append(report)
+    
+    return pd.DataFrame(reports_list)
+
+# --- 📊 Data Analysis Functions ---
+
+def calculate_metrics(df):
+    """Calculates all efficiency and weighted efficiency metrics based on the new logic."""
+    df_metrics = df.copy()
+    
+    # Calculate total planned resources for each report first
+    df_metrics['total_planned_resource'] = df_metrics['planned_manpower'].fillna(0) + df_metrics['planned_time'].fillna(0) + df_metrics['planned_activities'].fillna(0)
+
+    # Filter reports for the last 30 days
+    last_month_start = (datetime.datetime.now() - datetime.timedelta(days=30)).strftime('%Y-%m-%d')
+    # Ensure 'report_date' is a string before comparison
+    df_metrics['report_date'] = df_metrics['report_date'].apply(lambda x: x.isoformat() if isinstance(x, datetime.date) else x)
+    df_last_month = df_metrics[df_metrics['report_date'] >= last_month_start].copy()
+    
+    # Calculate the sum of total planned resources for the last month only
+    total_resource_sum = df_last_month['total_planned_resource'].sum()
+
+    # Apply the dynamic factors for manpower and time
+    def calculate_effective_manpower(row):
+        manpower_diff = row["manpower_used"].fillna(0) - row["planned_manpower"].fillna(0)
+        if row["planned_manpower"].fillna(0) == 0:
+            return 0
+        
+        factor = abs(manpower_diff) / row["planned_manpower"]
+        
+        if manpower_diff > 0: # Over-used manpower (punish)
+            return row["manpower_used"] - manpower_diff * (1 + factor)
+        elif manpower_diff < 0: # Under-used manpower (reward)
+            return row["manpower_used"] + abs(manpower_diff) * (1 + factor)
+        else: # Perfect match
+            return row["manpower_used"]
+
+    def calculate_effective_time(row):
+        time_diff = row["total_time"].fillna(0) - row["planned_time"].fillna(0)
+        if row["planned_time"].fillna(0) == 0:
+            return 0
+        
+        factor = abs(time_diff) / row["planned_time"]
+        
+        if time_diff > 0: # Over-used time (punish)
+            return row["total_time"] - time_diff * (1 + factor)
+        elif time_diff < 0: # Under-used time (reward)
+            return row["total_time"] + abs(time_diff) * (1 + factor)
+        else: # Perfect match
+            return row["total_time"]
+            
+    df_metrics["effective_manpower"] = df_metrics.apply(calculate_effective_manpower, axis=1)
+    df_metrics["effective_time"] = df_metrics.apply(calculate_effective_time, axis=1)
+    df_metrics['actual_activities'] = df_metrics['actual_activities'].fillna(0)
+
+    if total_resource_sum > 0:
+        # Calculate Given Weight for each report in the last month
+        df_metrics["Given Weight"] = (df_metrics['total_planned_resource'] / total_resource_sum) * 100
+        
+        # Calculate Actual Weight using effective resources
+        df_metrics['actual_resource_sum'] = df_metrics['effective_manpower'] + df_metrics['effective_time'] + df_metrics['actual_activities']
+        df_metrics["Actual Weight"] = (df_metrics['actual_resource_sum'] / total_resource_sum) * 100
+        
+    else:
+        df_metrics["Given Weight"] = 0
+        df_metrics["Actual Weight"] = 0
+
+    # Calculate final efficiency
+    df_metrics["Efficiency (%)"] = df_metrics.apply(
+        lambda row: (row["Actual Weight"] / row["Given Weight"]) * 100
+        if row["Given Weight"] > 0 else 0,
+        axis=1
+    )
+    
+    # Re-order columns for better viewing
+    cols = ['id', 'reporter', 'start_date', 'functional_location', 'specific_location',
+            'maintenance_type', 'equipment', 'affected_part',
+            'condition_observed', 'diagnosis', 'damage_type', 'action_taken',
+            'status', 'safety_condition',
+            'planned_activities', 'actual_activities', 'manpower_used', 'total_time',
+            'planned_manpower', 'planned_time', 'Given Weight', 'Actual Weight', 'Efficiency (%)']
+    
+    return df_metrics[cols]
+
+# --- 🖥️ Streamlit UI Components ---
+
+def show_login_signup():
+    """Displays the login and signup forms in the sidebar."""
+    
+    st.markdown(
+        """
+        <style>
+        .title-font {
+            font-family: "Times New Roman";
+            font-size: 20px;
+        }
+        .body-font {
+            font-family: "Times New Roman";
+            font-size: 16px;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True
+    )
+    
+    # Place text and developer info in columns
+    col1, col2 = st.columns([3, 1])
+    
     with col1:
-        st.subheader("Login")
-        login_username = st.text_input("Username", key="login_user")
-        login_password = st.text_input("Password", type="password", key="login_pass")
-        if st.button("Login"):
-            if not st.session_state.authenticated:
-                st.error("Cannot connect to database. Please check Firebase configuration.")
-            elif login_user(login_username, login_password):
-                st.session_state.logged_in = True
-                st.session_state.username = login_username
-                st.rerun()
-            else:
-                st.error("Invalid username or password.")
+        st.markdown("<h3 class='title-font'>Welcome</h3>", unsafe_allow_html=True)
+        st.markdown("<p class='body-font'>The Tekeze Hydropower Plant Maintenance Tracker app allows technicians to log field activities and equipment conditions in real time, enables engineers to verify technical details and diagnose issues, provides managers with clear oversight for decision-making and resource allocation, and supports planners & report writers in compiling accurate records for performance evaluation and future planning.</p>", unsafe_allow_html=True)
+        st.markdown("<h3 class='title-font'>Mission</h3>", unsafe_allow_html=True)
+        st.markdown("<p class='body-font'>To provide reliable and sustainable electric power through innovation technology, continuous learning, fairness and commitment.</p>", unsafe_allow_html=True)
+        st.markdown("<h3 class='title-font'>Vision</h3>", unsafe_allow_html=True)
+        st.markdown("<p class='body-font'>To be the power hub of africa</p>", unsafe_allow_html=True)
 
     with col2:
-        st.subheader("Register")
-        reg_username = st.text_input("New Username", key="reg_user")
-        reg_password = st.text_input("New Password", type="password", key="reg_pass")
-        if st.button("Register"):
-            if not st.session_state.authenticated:
-                st.error("Cannot connect to database. Please check Firebase configuration.")
-            else:
-                try:
-                    add_user(reg_username, reg_password)
-                    st.success("Registration successful! You can now log in.")
-                except Exception as e:
+        st.markdown(
+            """
+            <div style="display: flex; align-items: center; justify-content: flex-end; margin-top: 10px;">
+                <img src="https://placehold.co/30x30/000000/FFFFFF/png?text=GH" alt="Developer" style="width: 30px; height: 30px; border-radius: 50%; margin-right: 5px;">
+                <span style="font-size: 14px;">Gebremedhin Hagos</span>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+        
+    st.sidebar.subheader("Login / Sign Up")
+    menu = ["Login", "Sign Up"]
+    choice = st.sidebar.radio("Menu", menu)
 
-                    st.error(f"Registration failed: {e}")
+    if choice == "Sign Up":
+        st.sidebar.subheader("Create New Account")
+        new_user = st.sidebar.text_input("Username")
+        new_pass = st.sidebar.text_input("Password", type="password")
+        new_first_name = st.sidebar.text_input("First Name")
+        new_last_name = st.sidebar.text_input("Last Name")
+        new_user_type = st.sidebar.selectbox("User Type", ["Maintenance Staff", "Operator", "Manager"])
+        if st.sidebar.button("Create Account"):
+            try:
+                register_user(new_user, new_pass, new_first_name, new_last_name, new_user_type)
+            except Exception as e:
+                st.error(f"Registration failed: {e}")
+
+    elif choice == "Login":
+        st.sidebar.subheader("Login to your Account")
+        username = st.sidebar.text_input("Username")
+        password = st.sidebar.text_input("Password", type="password")
+        if st.sidebar.button("Login"):
+            try:
+                if login_user(username, password):
+                    st.rerun()
+                else:
+                    st.sidebar.error("Invalid username or password.")
+            except Exception as e:
+                st.error(f"Login failed: {e}")
+
+def show_main_app():
+    """Displays the main application interface after a user logs in."""
+    st.sidebar.write(f"Logged in as: **{st.session_state.user['first_name']} {st.session_state.user['last_name']}**")
+    if st.sidebar.button("Logout"):
+        st.session_state.clear()
+        st.rerun()
+
+    if st.session_state.user['user_type'] == "Manager":
+        app_mode = st.sidebar.radio("Navigation", ["Submit Report", "My Reports", "Manager Dashboard"])
+    else:
+        app_mode = st.sidebar.radio("Navigation", ["Submit Report", "My Reports"])
+
+
+    if app_mode == "Submit Report":
+        show_report_form()
+    elif app_mode == "My Reports":
+        show_my_reports(st.session_state.user['username'])
+    elif app_mode == "Manager Dashboard":
+        if st.session_state.user['user_type'] == "Manager":
+            show_manager_dashboard()
+        else:
+            st.error("You do not have permission to view this dashboard.")
+
+def show_report_form():
+    """Displays the maintenance report submission form."""
+    try:
+        st.image("dam.jpg", width='stretch')
+    except FileNotFoundError:
+        st.image("https://placehold.co/600x200/A1C4FD/ffffff?text=Dam+Image", width='stretch')
+
+    st.title("🛠️ Maintenance Report Form")
+
+    with st.form("report_form", clear_on_submit=True):
+        st.header("Report Details")
+        start_date = st.date_input("Date of duty start", datetime.date.today())
+        functional_location = st.selectbox("Functional Location", ["Powerhouse", "Dam", "Switch Yard", "Access road", "Garage", "Dwelling"])
+        specific_location = st.selectbox("Specific Location", ["Unit 1", "Unit 2", "Unit 3", "Unit 4", "Common system", "Spillway", "Intake gate", "Trash rack crane", "Diesel generator", "Bonnet gate", "Substation", "SYD control room", "Step down transformer", "Water supply", "Road", "Employee camp", "China camp", "Wanboo camp", "Garage", "Others"])
+        maintenance_type = st.selectbox("Maintenance Type", ["Inspection", "Preventive Maintenance", "Emergency/Breakdown/Corrective"])
+
+        st.header("Problem and Action")
+        equipment = st.text_input("Name of Equipment")
+        affected_part = st.text_input("Affected Part")
+        condition_observed = st.text_area("Condition Observed")
+        diagnosis = st.text_area("Diagnosis")
+        damage_type = st.text_input("Damage Type")
+        action_taken = st.text_area("Action Taken")
+        
+        st.header("Status and Safety")
+        status = st.selectbox("Status", ["Fully functional", "Functional but needs monitoring", "Temporarily functional (risk present)", "Not functional"])
+        safety_condition = st.selectbox("Safety Condition", ["Safely completed", "Unsafe condition was observed", "Maintenance planform was not good"])
+        
+        st.header("Resources and Metrics")
+        planned_activities = st.number_input("Planned Activities", min_value=0, step=1)
+        manpower_used = st.number_input("Manpower Used", min_value=0, step=1)
+        total_time = st.number_input("Total Time Used (hours)", min_value=0.0, step=0.5)
+        actual_activities = st.number_input("Actual Activities Done", min_value=0, step=1)
+        
+        submitted = st.form_submit_button("Submit Report")
+
+        if submitted:
+            report_data = {
+                'reporter': st.session_state.user['username'],
+                'report_date': start_date.isoformat(),
+                'functional_location': functional_location,
+                'specific_location': specific_location,
+                'maintenance_type': maintenance_type,
+                'equipment': equipment,
+                'affected_part': affected_part,
+                'condition_observed': condition_observed,
+                'diagnosis': diagnosis,
+                'damage_type': damage_type,
+                'action_taken': action_taken,
+                'status': status,
+                'safety_condition': safety_condition,
+                'planned_activities': planned_activities,
+                'manpower_used': manpower_used,
+                'total_time': total_time,
+                'actual_activities': actual_activities,
+                'planned_manpower': 0, # Placeholder for manager input
+                'planned_time': 0.0, # Placeholder for manager input
+            }
+            if insert_report(report_data):
+                st.success("✅ Report submitted successfully!")
+            else:
+                st.error("❌ Failed to submit report. Please try again.")
+
+def show_my_reports(username):
+    """Displays a table of the user's submitted reports."""
+    st.subheader("My Reports")
+    if 'db' not in st.session_state:
+        st.error("Database connection not ready. Please refresh the page.")
+        return
+        
+    df = get_reports(username)
+    if not df.empty:
+        df_metrics = calculate_metrics(df)
+        st.dataframe(df_metrics[['id', 'start_date', 'reporter', 'functional_location',
+                                'planned_activities', 'actual_activities', 'Efficiency (%)',
+                                'total_time', 'planned_manpower', 'manpower_used', 'planned_time',
+                                'action_taken']])
+    else:
+        st.info("You haven't submitted any reports yet.")
+
+def show_manager_dashboard():
+    """Displays the manager dashboard with all reports and efficiency metrics."""
+    st.subheader("All Reports (Manager Dashboard)")
+    if 'db' not in st.session_state:
+        st.error("Database connection not ready. Please refresh the page.")
+        return
+    
+    df_all = get_reports()
+    if not df_all.empty:
+        df_metrics = calculate_metrics(df_all)
+
+        # Use st.data_editor to enable editing and save changes
+        edited_df = st.data_editor(
+            df_metrics,
+            column_config={
+                "id": st.column_config.NumberColumn("Report ID", help="Unique ID for each report", disabled=True),
+                "planned_manpower": st.column_config.NumberColumn("Planned Manpower", help="Number of people planned for the task", min_value=0, format="%d"),
+                "planned_time": st.column_config.NumberColumn("Planned Time (hrs)", help="Planned time to complete the task", min_value=0.0, format="%.2f"),
+                "Given Weight": st.column_config.NumberColumn("Given Weight", disabled=True, format="%.2f"),
+                "Actual Weight": st.column_config.NumberColumn("Actual Weight", disabled=True, format="%.2f"),
+                "Efficiency (%)": st.column_config.NumberColumn("Efficiency (%)", disabled=True, format="%.2f"),
+            },
+            hide_index=True
+        )
+
+        # Detect changes and update the database
+        if not edited_df.equals(df_metrics):
+            diff_df = edited_df.loc[(edited_df['planned_manpower'] != df_metrics['planned_manpower']) | 
+                                    (edited_df['planned_time'] != df_metrics['planned_time'])]
+            
+            for index, row in diff_df.iterrows():
+                update_report(row['id'], row['planned_manpower'], row['planned_time'])
+            
+            st.success("Reports updated successfully!")
+            st.rerun()
+
+        # Display performance metrics
+        avg_efficiency = edited_df["Efficiency (%)"].mean()
+        
+        st.header("Performance Metrics")
+        st.metric("Average Efficiency", f"{avg_efficiency:.2f}%")
+        
+        st.subheader("Efficiency per Reporter")
+        reporter_eff = edited_df.groupby("reporter")["Efficiency (%)"].mean().reset_index()
+        reporter_eff.columns = ["Reporter", "Average Efficiency (%)"]
+        st.bar_chart(reporter_eff.set_index("Reporter"))
+    else:
+        st.info("No reports have been submitted yet.")
+
+# --- 🚀 Main Application Logic ---
+
+def main():
+    """Main function to run the Streamlit application."""
+
+    # Title and Logo section
+    col_logo, col_dam, col_title = st.columns([1, 2, 4])
+    with col_logo:
+        try:
+            st.image("EEP_logo.png", width=100)
+        except FileNotFoundError:
+            st.image("https://placehold.co/100x100/A1C4FD/ffffff?text=TKZ", width=100)
+    with col_dam:
+        try:
+            st.image("dam.jpg", width=300)
+        except FileNotFoundError:
+            st.warning("dam.jpg not found. Using a placeholder image.")
+            st.image("https://placehold.co/600x200/A1C4FD/ffffff?text=Dam+Image", width=300)
+    with col_title:
+        st.title("Tekeze Hydropower Plant")
+        st.subheader("Maintenance Tracker")
+
+    st.markdown("---")
+
+    initialize_firebase()
+    
+    if not st.session_state.logged_in:
+        show_login_signup()
+    else:
+        show_main_app()
+
+if __name__ == "__main__":
+    main()
+
 
 
