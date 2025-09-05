@@ -7,7 +7,8 @@ import json
 import datetime
 import math
 
-# Initialize Streamlit session state
+# --- ⚙️ Streamlit Session State ---
+# These variables persist across user interactions in the app.
 if 'page' not in st.session_state:
     st.session_state['page'] = 'home'
 if 'logged_in' not in st.session_state:
@@ -25,25 +26,42 @@ def initialize_firebase():
     """
     Initializes Firebase credentials from Streamlit secrets.
     Returns True if successful, False otherwise.
+    
+    This function first checks if Firebase is already initialized to avoid
+    re-initializing it every time a user interacts with the app.
+    
+    It then attempts to load the `firebase_config` from Streamlit's secrets,
+    which is the secure way to manage credentials in a hosted environment.
     """
     if st.session_state.firebase_initialized:
         return True
     
     try:
-        # Use Streamlit's secrets management for Firebase config
+        # Step 1: Access the secure Firebase configuration from Streamlit Secrets.
+        # This will fail if the `firebase_config` key is not in your secrets.toml file.
         firebase_config = st.secrets["firebase_config"]
         
+        # Step 2: Check if a Firebase app instance has already been created.
+        # `_apps` is an internal dictionary of initialized apps.
         if not firebase_admin._apps:
+            # Step 3: Create a credentials object from the config dictionary.
+            # This is what Firebase uses to authenticate with your project.
             cred = credentials.Certificate(firebase_config)
+            
+            # Step 4: Initialize the Firebase app with the credentials.
             firebase_admin.initialize_app(cred)
             
+        # Step 5: Get a Firestore client instance and store it in session state.
         st.session_state.db = firestore.client()
         st.session_state.firebase_initialized = True
         return True
     except KeyError:
+        # This is the error you are currently facing. It means Streamlit can't
+        # find the `firebase_config` key in the secrets.
         st.error("Firebase configuration not found. Please ensure 'firebase_config' is set in Streamlit Secrets.")
         return False
     except Exception as e:
+        # A more general catch for other potential errors during initialization.
         st.error(f"Error initializing Firebase: {e}")
         return False
 
@@ -53,12 +71,14 @@ def login_user(username, password):
     """
     Authenticates a user against the Firestore database.
     """
+    # Use Firestore to get the document for the given username.
     user_ref = st.session_state.db.collection('users').document(username)
     user_doc = user_ref.get()
 
     if user_doc.exists:
         user_data = user_doc.to_dict()
         hashed_password = user_data.get('password')
+        # Use bcrypt to securely check the entered password against the stored hash.
         if hashed_password and bcrypt.checkpw(password.encode('utf-8'), hashed_password.encode('utf-8')):
             st.session_state.logged_in = True
             st.session_state.user = user_data
@@ -67,6 +87,7 @@ def login_user(username, password):
 
 def register_user(username, password, first_name, last_name, user_type):
     """Registers a new user in the Firestore database."""
+    # Hash the password before saving for security.
     hashed_password = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
     user_data = {
         'username': username,
@@ -75,6 +96,7 @@ def register_user(username, password, first_name, last_name, user_type):
         'last_name': last_name,
         'user_type': user_type
     }
+    # Save the new user document to the 'users' collection.
     user_ref = st.session_state.db.collection('users').document(username)
     user_ref.set(user_data)
     st.success("Registration successful! Please log in.")
@@ -108,11 +130,14 @@ def get_reports(username=None):
     """Fetches reports from the Firestore database. Fetches all if username is None."""
     reports_ref = st.session_state.db.collection('maintenance_reports')
     if username:
+        # Build a query to fetch reports for a specific user.
         query = reports_ref.where('reporter', '==', username).order_by('report_date', direction=firestore.Query.DESCENDING)
     else:
+        # Build a query to fetch all reports.
         query = reports_ref.order_by('report_date', direction=firestore.Query.DESCENDING)
 
     reports_list = []
+    # Stream the documents from the query result.
     for doc in query.stream():
         report = doc.to_dict()
         report['id'] = doc.id
@@ -440,13 +465,14 @@ def main():
 
     st.markdown("---")
     
-    # Check Firebase initialization status
+    # Step 1: Check Firebase initialization status
     if not st.session_state.firebase_initialized:
         with st.spinner("Connecting to the database..."):
+            # Step 2: Call the initialization function. If it fails, the app stops here.
             if not initialize_firebase():
                 return
     
-    # Now that Firebase is guaranteed to be initialized, proceed with the app
+    # Step 3: Now that Firebase is guaranteed to be initialized, proceed with the app
     if not st.session_state.logged_in:
         show_login_signup()
     else:
