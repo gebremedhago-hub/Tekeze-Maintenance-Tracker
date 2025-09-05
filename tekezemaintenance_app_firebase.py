@@ -133,7 +133,7 @@ if 'authenticated' not in st.session_state:
 col_logo, col_dam, col_title = st.columns([1, 2, 4])
 with col_logo:
     try:
-        st.image("eep_logo.png", width=100)
+        st.image("EEP_logo.png", width=100)
     except FileNotFoundError:
         st.image("https://placehold.co/100x100/A1C4FD/ffffff?text=TKZ", width=100)
 with col_dam:
@@ -380,4 +380,5 @@ else:
                     add_user(reg_username, reg_password)
                     st.success("Registration successful! You can now log in.")
                 except Exception as e:
+
                     st.error(f"Registration failed: {e}")
