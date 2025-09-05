@@ -130,7 +130,7 @@ if 'authenticated' not in st.session_state:
     st.session_state.authenticated = False
 
 # Title and Logo section
-col_dam, col_title = st.columns([1, 2, 4])
+col_dam, col_title = st.columns([2, 4])
 with col_dam:
     try:
         st.image("dam.jpg", width=300)
@@ -377,4 +377,5 @@ else:
                 except Exception as e:
 
                     st.error(f"Registration failed: {e}")
+
 
