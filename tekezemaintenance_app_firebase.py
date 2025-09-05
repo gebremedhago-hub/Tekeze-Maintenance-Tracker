@@ -8,7 +8,6 @@ import datetime
 import math
 
 # Initialize Streamlit session state
-
 if 'page' not in st.session_state:
     st.session_state['page'] = 'home'
 if 'logged_in' not in st.session_state:
@@ -17,20 +16,30 @@ if 'user' not in st.session_state:
     st.session_state['user'] = None
 if 'db' not in st.session_state:
     st.session_state['db'] = None
+if 'firebase_initialized' not in st.session_state:
+    st.session_state['firebase_initialized'] = False
 
 # --- Firebase Setup ---
 
 def initialize_firebase():
-    """Initializes Firebase credentials from Streamlit secrets."""
+    """
+    Initializes Firebase credentials from Streamlit secrets.
+    Returns True if successful, False otherwise.
+    """
+    if st.session_state.firebase_initialized:
+        return True
+    
     try:
+        # Use Streamlit's secrets management for Firebase config
+        firebase_config = st.secrets["firebase_config"]
+        
         if not firebase_admin._apps:
-            # Use Streamlit's secrets management for Firebase config
-            firebase_config = st.secrets["firebase_config"]
             cred = credentials.Certificate(firebase_config)
             firebase_admin.initialize_app(cred)
-            st.session_state.db = firestore.client()
-            return True
-        return True # App is already initialized
+            
+        st.session_state.db = firestore.client()
+        st.session_state.firebase_initialized = True
+        return True
     except KeyError:
         st.error("Firebase configuration not found. Please ensure 'firebase_config' is set in Streamlit Secrets.")
         return False
@@ -44,10 +53,6 @@ def login_user(username, password):
     """
     Authenticates a user against the Firestore database.
     """
-    if not st.session_state.db:
-        st.error("Database connection not ready. Please refresh the page.")
-        return False
-
     user_ref = st.session_state.db.collection('users').document(username)
     user_doc = user_ref.get()
 
@@ -62,10 +67,6 @@ def login_user(username, password):
 
 def register_user(username, password, first_name, last_name, user_type):
     """Registers a new user in the Firestore database."""
-    if not st.session_state.db:
-        st.error("Database connection not ready. Please refresh the page.")
-        return False
-
     hashed_password = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
     user_data = {
         'username': username,
@@ -203,7 +204,6 @@ def calculate_metrics(df):
 
 def show_login_signup():
     """Displays the login and signup forms in the sidebar."""
-    
     st.markdown(
         """
         <style>
@@ -285,7 +285,6 @@ def show_main_app():
     else:
         app_mode = st.sidebar.radio("Navigation", ["Submit Report", "My Reports"])
 
-
     if app_mode == "Submit Report":
         show_report_form()
     elif app_mode == "My Reports":
@@ -362,10 +361,6 @@ def show_report_form():
 def show_my_reports(username):
     """Displays a table of the user's submitted reports."""
     st.subheader("My Reports")
-    if not st.session_state.db:
-        st.error("Database connection not ready. Please refresh the page.")
-        return
-        
     df = get_reports(username)
     if not df.empty:
         df_metrics = calculate_metrics(df)
@@ -379,10 +374,6 @@ def show_my_reports(username):
 def show_manager_dashboard():
     """Displays the manager dashboard with all reports and efficiency metrics."""
     st.subheader("All Reports (Manager Dashboard)")
-    if not st.session_state.db:
-        st.error("Database connection not ready. Please refresh the page.")
-        return
-    
     df_all = get_reports()
     if not df_all.empty:
         df_metrics = calculate_metrics(df_all)
@@ -449,11 +440,13 @@ def main():
 
     st.markdown("---")
     
-    with st.spinner("Connecting to the database..."):
-        if not initialize_firebase():
-            st.error("Failed to connect to the database. Please check your Firebase configuration in Streamlit secrets.")
-            return # Stop the app if initialization fails
-
+    # Check Firebase initialization status
+    if not st.session_state.firebase_initialized:
+        with st.spinner("Connecting to the database..."):
+            if not initialize_firebase():
+                return
+    
+    # Now that Firebase is guaranteed to be initialized, proceed with the app
     if not st.session_state.logged_in:
         show_login_signup()
     else:
@@ -461,6 +454,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
