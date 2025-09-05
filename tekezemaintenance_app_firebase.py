@@ -130,12 +130,7 @@ if 'authenticated' not in st.session_state:
     st.session_state.authenticated = False
 
 # Title and Logo section
-col_logo, col_dam, col_title = st.columns([1, 2, 4])
-with col_logo:
-    try:
-        st.image("EEP_logo.png", width=100)
-    except FileNotFoundError:
-        st.image("https://placehold.co/100x100/A1C4FD/ffffff?text=TKZ", width=100)
+col_dam, col_title = st.columns([1, 2, 4])
 with col_dam:
     try:
         st.image("dam.jpg", width=300)
@@ -382,3 +377,4 @@ else:
                 except Exception as e:
 
                     st.error(f"Registration failed: {e}")
+
