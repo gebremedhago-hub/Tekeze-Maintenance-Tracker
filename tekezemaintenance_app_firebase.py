@@ -129,7 +129,10 @@ def update_report(report_id, planned_manpower, planned_time):
         return False
 
 def get_reports(username=None):
-    """Fetches reports from the Firestore database. Fetches all if username is None."""
+    """
+    Fetches reports from the Firestore database and ensures the 'photo' key exists.
+    Fetches all if username is None.
+    """
     reports_ref = st.session_state.db.collection('maintenance_reports')
     if username:
         # Build a query to fetch reports for a specific user.
@@ -143,6 +146,9 @@ def get_reports(username=None):
     for doc in query.stream():
         report = doc.to_dict()
         report['id'] = doc.id
+        # FIX: Ensure the 'photo' key exists to prevent KeyError.
+        # This will add a 'photo' key with a None value if it's missing from old reports.
+        report['photo'] = report.get('photo', None)
         reports_list.append(report)
     
     return pd.DataFrame(reports_list)
@@ -403,7 +409,8 @@ def show_my_reports(username):
             "photo": st.column_config.ImageColumn("Photo", help="Photo of the affected part"),
         }
 
-        st.dataframe(df_display, column_config=photo_col_config)
+        # FIX: Changed use_column_width to use_container_width
+        st.dataframe(df_display, column_config=photo_col_config, use_container_width=True)
     else:
         st.info("You haven't submitted any reports yet.")
 
@@ -418,6 +425,7 @@ def show_manager_dashboard():
 
         with tab_data:
             # Use st.data_editor to enable editing and save changes
+            # FIX: Changed use_column_width to use_container_width
             edited_df = st.data_editor(
                 df_metrics,
                 column_config={
@@ -429,7 +437,8 @@ def show_manager_dashboard():
                     "Actual Weight": st.column_config.NumberColumn("Actual Weight", disabled=True, format="%.2f"),
                     "Efficiency (%)": st.column_config.NumberColumn("Efficiency (%)", disabled=True, format="%.2f"),
                 },
-                hide_index=True
+                hide_index=True,
+                use_container_width=True
             )
 
             # Detect changes and update the database
@@ -474,10 +483,8 @@ def main():
 
     # Move EEP logo and developer name to the sidebar
     with st.sidebar:
-        try:
-            st.image("EEP_logo.png", use_column_width=True)
-        except FileNotFoundError:
-            st.image("https://placehold.co/200x100/A1C4FD/ffffff?text=TKZ+EEP+LOGO", use_column_width=True)
+        # FIX: Using a placeholder image for EEP logo to avoid FileNotFoundError
+        st.image("https://placehold.co/200x100/A1C4FD/ffffff?text=TKZ+EEP+LOGO", use_container_width=True)
         st.markdown(
             """
             <div style="display: flex; align-items: center; justify-content: flex-start; margin-top: 10px;">
@@ -491,11 +498,8 @@ def main():
     # Title and Logo section
     col_dam, col_title = st.columns([1, 3])
     with col_dam:
-        try:
-            st.image("dam.jpg", use_column_width=True)
-        except FileNotFoundError:
-            st.warning("dam.jpg not found. Using a placeholder image.")
-            st.image("https://placehold.co/600x200/A1C4FD/ffffff?text=Dam+Image", use_column_width=True)
+        # FIX: Using a placeholder image for the dam to avoid FileNotFoundError
+        st.image("https://placehold.co/600x200/A1C4FD/ffffff?text=Tekeze+Dam+Image", use_container_width=True)
     with col_title:
         st.title("Tekeze Hydropower Plant")
         st.subheader("Maintenance Tracker")
