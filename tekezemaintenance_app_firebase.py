@@ -148,6 +148,42 @@ def get_reports(username=None):
 
 # --- 📊 Data Analysis Functions ---
 
+def calculate_effective_manpower(row):
+    """Calculates effective manpower based on planned vs. actual."""
+    manpower_used = row["manpower_used"] if pd.notna(row["manpower_used"]) else 0
+    planned_manpower = row["planned_manpower"] if pd.notna(row["planned_manpower"]) else 0
+
+    if planned_manpower == 0:
+        return 0
+    
+    manpower_diff = manpower_used - planned_manpower
+    factor = abs(manpower_diff) / planned_manpower
+    
+    if manpower_diff > 0: # Over-used manpower (punish)
+        return manpower_used - manpower_diff * (1 + factor)
+    elif manpower_diff < 0: # Under-used manpower (reward)
+        return manpower_used + abs(manpower_diff) * (1 + factor)
+    else: # Perfect match
+        return manpower_used
+
+def calculate_effective_time(row):
+    """Calculates effective time based on planned vs. actual."""
+    total_time = row["total_time"] if pd.notna(row["total_time"]) else 0
+    planned_time = row["planned_time"] if pd.notna(row["planned_time"]) else 0
+
+    if planned_time == 0:
+        return 0
+    
+    time_diff = total_time - planned_time
+    factor = abs(time_diff) / planned_time
+    
+    if time_diff > 0: # Over-used time (punish)
+        return total_time - time_diff * (1 + factor)
+    elif time_diff < 0: # Under-used time (reward)
+        return total_time + abs(time_diff) * (1 + factor)
+    else: # Perfect match
+        return total_time
+
 def calculate_metrics(df):
     """Calculates all efficiency and weighted efficiency metrics based on the new logic."""
     df_metrics = df.copy()
@@ -165,34 +201,6 @@ def calculate_metrics(df):
     total_resource_sum = df_last_month['total_planned_resource'].sum()
 
     # Apply the dynamic factors for manpower and time
-    def calculate_effective_manpower(row):
-        manpower_diff = row["manpower_used"].fillna(0) - row["planned_manpower"].fillna(0)
-        if row["planned_manpower"].fillna(0) == 0:
-            return 0
-        
-        factor = abs(manpower_diff) / row["planned_manpower"]
-        
-        if manpower_diff > 0: # Over-used manpower (punish)
-            return row["manpower_used"] - manpower_diff * (1 + factor)
-        elif manpower_diff < 0: # Under-used manpower (reward)
-            return row["manpower_used"] + abs(manpower_diff) * (1 + factor)
-        else: # Perfect match
-            return row["manpower_used"]
-
-    def calculate_effective_time(row):
-        time_diff = row["total_time"].fillna(0) - row["planned_time"].fillna(0)
-        if row["planned_time"].fillna(0) == 0:
-            return 0
-        
-        factor = abs(time_diff) / row["planned_time"]
-        
-        if time_diff > 0: # Over-used time (punish)
-            return row["total_time"] - time_diff * (1 + factor)
-        elif time_diff < 0: # Under-used time (reward)
-            return row["total_time"] + abs(time_diff) * (1 + factor)
-        else: # Perfect match
-            return row["total_time"]
-            
     df_metrics["effective_manpower"] = df_metrics.apply(calculate_effective_manpower, axis=1)
     df_metrics["effective_time"] = df_metrics.apply(calculate_effective_time, axis=1)
     df_metrics['actual_activities'] = df_metrics['actual_activities'].fillna(0)
@@ -481,6 +489,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
