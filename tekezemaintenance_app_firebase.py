@@ -254,28 +254,14 @@ def show_login_signup():
         unsafe_allow_html=True
     )
     
-    # Place text and developer info in columns
-    col1, col2 = st.columns([3, 1])
-    
-    with col1:
-        st.markdown("<h3 class='title-font'>Welcome</h3>", unsafe_allow_html=True)
-        st.markdown("<p class='body-font'>The Tekeze Hydropower Plant Maintenance Tracker app allows technicians to log field activities and equipment conditions in real time, enables engineers to verify technical details and diagnose issues, provides managers with clear oversight for decision-making and resource allocation, and supports planners & report writers in compiling accurate records for performance evaluation and future planning.</p>", unsafe_allow_html=True)
-        st.markdown("<h3 class='title-font'>Mission</h3>", unsafe_allow_html=True)
-        st.markdown("<p class='body-font'>To provide reliable and sustainable electric power through innovation technology, continuous learning, fairness and commitment.</p>", unsafe_allow_html=True)
-        st.markdown("<h3 class='title-font'>Vision</h3>", unsafe_allow_html=True)
-        st.markdown("<p class='body-font'>To be the power hub of africa</p>", unsafe_allow_html=True)
+    # Place text in the main content area
+    st.markdown("<h3 class='title-font'>Welcome</h3>", unsafe_allow_html=True)
+    st.markdown("<p class='body-font'>The Tekeze Hydropower Plant Maintenance Tracker app allows technicians to log field activities and equipment conditions in real time, enables engineers to verify technical details and diagnose issues, provides managers with clear oversight for decision-making and resource allocation, and supports planners & report writers in compiling accurate records for performance evaluation and future planning.</p>", unsafe_allow_html=True)
+    st.markdown("<h3 class='title-font'>Mission</h3>", unsafe_allow_html=True)
+    st.markdown("<p class='body-font'>To provide reliable and sustainable electric power through innovation technology, continuous learning, fairness and commitment.</p>", unsafe_allow_html=True)
+    st.markdown("<h3 class='title-font'>Vision</h3>", unsafe_allow_html=True)
+    st.markdown("<p class='body-font'>To be the power hub of africa</p>", unsafe_allow_html=True)
 
-    with col2:
-        st.markdown(
-            """
-            <div style="display: flex; align-items: center; justify-content: flex-end; margin-top: 10px;">
-                <img src="https://placehold.co/30x30/000000/FFFFFF/png?text=GH" alt="Developer" style="width: 30px; height: 30px; border-radius: 50%; margin-right: 5px;">
-                <span style="font-size: 14px;">Gebremedhin Hagos</span>
-            </div>
-            """,
-            unsafe_allow_html=True
-        )
-        
     st.sidebar.subheader("Login / Sign Up")
     menu = ["Login", "Sign Up"]
     choice = st.sidebar.radio("Menu", menu)
@@ -398,10 +384,15 @@ def show_my_reports(username):
     df = get_reports(username)
     if not df.empty:
         df_metrics = calculate_metrics(df)
-        st.dataframe(df_metrics[['id', 'report_date', 'reporter', 'functional_location',
-                                'planned_activities', 'actual_activities', 'Efficiency (%)',
-                                'total_time', 'planned_manpower', 'manpower_used', 'planned_time',
-                                'action_taken']])
+        
+        # Columns to display for the reporter
+        reporter_cols = ['id', 'report_date', 'reporter', 'functional_location', 'specific_location',
+                         'maintenance_type', 'equipment', 'affected_part',
+                         'condition_observed', 'diagnosis', 'damage_type', 'action_taken',
+                         'status', 'safety_condition',
+                         'planned_activities', 'actual_activities', 'manpower_used', 'total_time']
+                         
+        st.dataframe(df_metrics[reporter_cols])
     else:
         st.info("You haven't submitted any reports yet.")
 
@@ -456,13 +447,24 @@ def show_manager_dashboard():
 def main():
     """Main function to run the Streamlit application."""
 
-    # Title and Logo section
-    col_logo, col_dam, col_title = st.columns([1, 2, 4])
-    with col_logo:
+    # Move EEP logo and developer name to the sidebar
+    with st.sidebar:
         try:
             st.image("EEP_logo.png", width=100)
         except FileNotFoundError:
             st.image("https://placehold.co/100x100/A1C4FD/ffffff?text=TKZ", width=100)
+        st.markdown(
+            """
+            <div style="display: flex; align-items: center; justify-content: flex-start; margin-top: 10px;">
+                <img src="https://placehold.co/30x30/000000/FFFFFF/png?text=GH" alt="Developer" style="width: 30px; height: 30px; border-radius: 50%; margin-right: 5px;">
+                <span style="font-size: 14px;">Gebremedhin Hagos</span>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+    
+    # Title and Logo section
+    col_dam, col_title = st.columns([1, 4])
     with col_dam:
         try:
             st.image("dam.jpg", width=300)
@@ -490,6 +492,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
