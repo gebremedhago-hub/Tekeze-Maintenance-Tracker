@@ -1,37 +1,3 @@
-# The MIT License (MIT)
-
-# Copyright (c) 2024 Gebremedhin Hagos
-
-# Permission is hereby granted, free of charge, to any person obtaining a copy
-
-# of this software and associated documentation files (the "Software"), to deal
-
-# in the Software without restriction, including without limitation the rights
-
-# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-
-# copies of the Software, and to permit persons to whom the Software is
-
-# furnished to do so, subject to the following conditions:
-
-# The above copyright notice and this permission notice shall be included in all
-
-# copies or substantial portions of the Software.
-
-# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-
-# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-
-# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-
-# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-
-# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-
-# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-
-# SOFTWARE.
-
 import streamlit as st
 import firebase_admin
 from firebase_admin import credentials, firestore
@@ -260,11 +226,11 @@ def calculate_metrics(df):
     
     # Re-order columns for better viewing
     cols = ['id', 'reporter', 'report_date', 'functional_location', 'specific_location',
-            'maintenance_type', 'equipment', 'affected_part',
-            'condition_observed', 'diagnosis', 'damage_type', 'action_taken',
-            'status', 'safety_condition',
-            'planned_activities', 'actual_activities', 'manpower_used', 'total_time',
-            'planned_manpower', 'planned_time', 'Given Weight', 'Actual Weight', 'Efficiency (%)']
+             'maintenance_type', 'equipment', 'affected_part',
+             'condition_observed', 'diagnosis', 'damage_type', 'action_taken',
+             'status', 'safety_condition',
+             'planned_activities', 'actual_activities', 'manpower_used', 'total_time',
+             'planned_manpower', 'planned_time', 'Given Weight', 'Actual Weight', 'Efficiency (%)']
     
     return df_metrics[cols]
 
@@ -289,7 +255,7 @@ def show_login_signup():
     )
     
     # Place text and developer info in columns
-    col1, col2 = st.columns([3, 1])
+    col1 = st.columns([1])[0]
     
     with col1:
         st.markdown("<h3 class='title-font'>Welcome</h3>", unsafe_allow_html=True)
@@ -299,16 +265,17 @@ def show_login_signup():
         st.markdown("<h3 class='title-font'>Vision</h3>", unsafe_allow_html=True)
         st.markdown("<p class='body-font'>To be the power hub of africa</p>", unsafe_allow_html=True)
 
-    with col2:
-        st.markdown(
-            """
-            <div style="display: flex; align-items: center; justify-content: flex-end; margin-top: 10px;">
-                <img src="https://placehold.co/30x30/000000/FFFFFF/png?text=GH" alt="Developer" style="width: 30px; height: 30px; border-radius: 50%; margin-right: 5px;">
-                <span style="font-size: 14px;">Gebremedhin Hagos</span>
+    st.sidebar.markdown(
+        """
+        <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; margin-bottom: 20px;">
+            <div style="text-align: center;">
+                <img src="https://placehold.co/100x100/A1C4FD/ffffff?text=TKZ" alt="EEP Logo" style="width: 100px; height: 100px; margin-bottom: 10px;">
+                <span style="font-size: 14px; font-weight: bold;">Gebremedhin Hagos</span>
             </div>
-            """,
-            unsafe_allow_html=True
-        )
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
         
     st.sidebar.subheader("Login / Sign Up")
     menu = ["Login", "Sign Up"]
@@ -431,11 +398,21 @@ def show_my_reports(username):
     st.subheader("My Reports")
     df = get_reports(username)
     if not df.empty:
-        df_metrics = calculate_metrics(df)
-        st.dataframe(df_metrics[['id', 'report_date', 'reporter', 'functional_location',
-                                'planned_activities', 'actual_activities', 'Efficiency (%)',
-                                'total_time', 'planned_manpower', 'manpower_used', 'planned_time',
-                                'action_taken']])
+        # Check if the user is a manager to determine what to show
+        if st.session_state.user['user_type'] == 'Manager':
+            df_metrics = calculate_metrics(df)
+            st.dataframe(df_metrics[['id', 'report_date', 'reporter', 'functional_location',
+                                     'planned_activities', 'actual_activities', 'Efficiency (%)',
+                                     'total_time', 'planned_manpower', 'manpower_used', 'planned_time',
+                                     'action_taken']])
+        else:
+            # For non-managers, only show the fields they are allowed to see
+            st.dataframe(df[[
+                'id', 'report_date', 'reporter', 'functional_location', 'specific_location',
+                'maintenance_type', 'equipment', 'affected_part', 'condition_observed',
+                'diagnosis', 'damage_type', 'action_taken', 'status', 'safety_condition',
+                'planned_activities', 'actual_activities', 'manpower_used', 'total_time'
+            ]])
     else:
         st.info("You haven't submitted any reports yet.")
 
@@ -464,7 +441,7 @@ def show_manager_dashboard():
         # Detect changes and update the database
         if not edited_df.equals(df_metrics):
             diff_df = edited_df.loc[(edited_df['planned_manpower'] != df_metrics['planned_manpower']) | 
-                                    (edited_df['planned_time'] != df_metrics['planned_time'])]
+                                     (edited_df['planned_time'] != df_metrics['planned_time'])]
             
             for index, row in diff_df.iterrows():
                 update_report(row['id'], row['planned_manpower'], row['planned_time'])
@@ -491,12 +468,7 @@ def main():
     """Main function to run the Streamlit application."""
 
     # Title and Logo section
-    col_logo, col_dam, col_title = st.columns([1, 2, 4])
-    with col_logo:
-        try:
-            st.image("EEP_logo.png", width=100)
-        except FileNotFoundError:
-            st.image("https://placehold.co/100x100/A1C4FD/ffffff?text=TKZ", width=100)
+    col_dam, col_title = st.columns([1, 4])
     with col_dam:
         try:
             st.image("dam.jpg", width=300)
