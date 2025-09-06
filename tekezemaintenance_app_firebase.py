@@ -6,7 +6,9 @@ import pandas as pd
 import json
 import datetime
 import math
-import base64
+from google.cloud.firestore_v1 import FieldFilter
+from google.cloud.exceptions import NotFound
+import re
 
 # --- ⚙️ Streamlit Session State ---
 # These variables persist across user interactions in the app.
@@ -20,6 +22,9 @@ if 'db' not in st.session_state:
     st.session_state['db'] = None
 if 'firebase_initialized' not in st.session_state:
     st.session_state['firebase_initialized'] = False
+if 'current_page' not in st.session_state:
+    st.session_state['current_page'] = 'login'
+
 
 # --- Firebase Setup ---
 
@@ -27,43 +32,23 @@ def initialize_firebase():
     """
     Initializes Firebase credentials from Streamlit secrets.
     Returns True if successful, False otherwise.
-    
-    This function first checks if Firebase is already initialized to avoid
-    re-initializing it every time a user interacts with the app.
-    
-    It then attempts to load the `firebase_config` from Streamlit's secrets,
-    which is the secure way to manage credentials in a hosted environment.
     """
     if st.session_state.firebase_initialized:
         return True
     
     try:
-        # Step 1: Access the secure Firebase configuration from Streamlit Secrets.
-        # This will fail if the `firebase_config` key is not in your secrets.toml file.
         firebase_config = st.secrets["firebase_config"]
-        
-        # Step 2: Check if a Firebase app instance has already been created.
-        # `_apps` is an internal dictionary of initialized apps.
         if not firebase_admin._apps:
-            # Step 3: Create a credentials object from the config dictionary.
-            # We explicitly convert `firebase_config` to a dict to ensure
-            # it is in the correct format for the Firebase library.
             cred = credentials.Certificate(dict(firebase_config))
-            
-            # Step 4: Initialize the Firebase app with the credentials.
             firebase_admin.initialize_app(cred)
             
-        # Step 5: Get a Firestore client instance and store it in session state.
         st.session_state.db = firestore.client()
         st.session_state.firebase_initialized = True
         return True
     except KeyError:
-        # This is the error you are currently facing. It means Streamlit can't
-        # find the `firebase_config` key in the secrets.toml file.
         st.error("Firebase configuration not found. Please ensure 'firebase_config' is set in Streamlit Secrets.")
         return False
     except Exception as e:
-        # A more general catch for other potential errors during initialization.
         st.error(f"Error initializing Firebase: {e}")
         return False
 
@@ -73,14 +58,12 @@ def login_user(username, password):
     """
     Authenticates a user against the Firestore database.
     """
-    # Use Firestore to get the document for the given username.
     user_ref = st.session_state.db.collection('users').document(username)
     user_doc = user_ref.get()
 
     if user_doc.exists:
         user_data = user_doc.to_dict()
         hashed_password = user_data.get('password')
-        # Use bcrypt to securely check the entered password against the stored hash.
         if hashed_password and bcrypt.checkpw(password.encode('utf-8'), hashed_password.encode('utf-8')):
             st.session_state.logged_in = True
             st.session_state.user = user_data
@@ -89,7 +72,6 @@ def login_user(username, password):
 
 def register_user(username, password, first_name, last_name, user_type):
     """Registers a new user in the Firestore database."""
-    # Hash the password before saving for security.
     hashed_password = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
     user_data = {
         'username': username,
@@ -98,7 +80,6 @@ def register_user(username, password, first_name, last_name, user_type):
         'last_name': last_name,
         'user_type': user_type
     }
-    # Save the new user document to the 'users' collection.
     user_ref = st.session_state.db.collection('users').document(username)
     user_ref.set(user_data)
     st.success("Registration successful! Please log in.")
@@ -129,26 +110,17 @@ def update_report(report_id, planned_manpower, planned_time):
         return False
 
 def get_reports(username=None):
-    """
-    Fetches reports from the Firestore database and ensures the 'photo' key exists.
-    Fetches all if username is None.
-    """
+    """Fetches reports from the Firestore database. Fetches all if username is None."""
     reports_ref = st.session_state.db.collection('maintenance_reports')
     if username:
-        # Build a query to fetch reports for a specific user.
-        query = reports_ref.where('reporter', '==', username).order_by('report_date', direction=firestore.Query.DESCENDING)
+        query = reports_ref.where(filter=FieldFilter('reporter', '==', username))
     else:
-        # Build a query to fetch all reports.
-        query = reports_ref.order_by('report_date', direction=firestore.Query.DESCENDING)
+        query = reports_ref
 
     reports_list = []
-    # Stream the documents from the query result.
     for doc in query.stream():
         report = doc.to_dict()
         report['id'] = doc.id
-        # FIX: Ensure the 'photo' key exists to prevent KeyError.
-        # This will add a 'photo' key with a None value if it's missing from old reports.
-        report['photo'] = report.get('photo', None)
         reports_list.append(report)
     
     return pd.DataFrame(reports_list)
@@ -195,11 +167,15 @@ def calculate_metrics(df):
     """Calculates all efficiency and weighted efficiency metrics based on the new logic."""
     df_metrics = df.copy()
     
+    # Fill NA values with 0 for calculation robustness
+    df_metrics = df_metrics.fillna(0)
+
     # Calculate total planned resources for each report first
-    df_metrics['total_planned_resource'] = df_metrics['planned_manpower'].fillna(0) + df_metrics['planned_time'].fillna(0) + df_metrics['planned_activities'].fillna(0)
+    df_metrics['total_planned_resource'] = df_metrics['planned_manpower'] + df_metrics['planned_time'] + df_metrics['planned_activities']
 
     # Filter reports for the last 30 days
-    last_month_start = (datetime.datetime.now() - datetime.timedelta(days=30)).strftime('%Y-%m-%d')
+    last_month_start = (datetime.datetime.now() - datetime.timedelta(days=30)).date().isoformat()
+    
     # Ensure 'report_date' is a string before comparison
     df_metrics['report_date'] = df_metrics['report_date'].apply(lambda x: x.isoformat() if isinstance(x, datetime.date) else x)
     df_last_month = df_metrics[df_metrics['report_date'] >= last_month_start].copy()
@@ -235,9 +211,9 @@ def calculate_metrics(df):
     cols = ['id', 'reporter', 'report_date', 'functional_location', 'specific_location',
             'maintenance_type', 'equipment', 'affected_part',
             'condition_observed', 'diagnosis', 'damage_type', 'action_taken',
-            'status', 'safety_condition',
-            'planned_activities', 'actual_activities', 'manpower_used', 'total_time',
-            'planned_manpower', 'planned_time', 'Given Weight', 'Actual Weight', 'Efficiency (%)']
+            'status', 'safety_condition', 'planned_activities', 'actual_activities',
+            'manpower_used', 'total_time', 'planned_manpower', 'planned_time',
+            'Given Weight', 'Actual Weight', 'Efficiency (%)', 'image_url']
     
     return df_metrics[cols]
 
@@ -256,19 +232,37 @@ def show_login_signup():
             font-family: "Times New Roman";
             font-size: 16px;
         }
+        @media (max-width: 600px) {
+            .body-font {
+                font-size: 14px;
+            }
+        }
         </style>
         """,
         unsafe_allow_html=True
     )
     
-    # Place text in the main content area
-    st.markdown("<h3 class='title-font'>Welcome</h3>", unsafe_allow_html=True)
-    st.markdown("<p class='body-font'>The Tekeze Hydropower Plant Maintenance Tracker app allows technicians to log field activities and equipment conditions in real time, enables engineers to verify technical details and diagnose issues, provides managers with clear oversight for decision-making and resource allocation, and supports planners & report writers in compiling accurate records for performance evaluation and future planning.</p>", unsafe_allow_html=True)
-    st.markdown("<h3 class='title-font'>Mission</h3>", unsafe_allow_html=True)
-    st.markdown("<p class='body-font'>To provide reliable and sustainable electric power through innovation technology, continuous learning, fairness and commitment.</p>", unsafe_allow_html=True)
-    st.markdown("<h3 class='title-font'>Vision</h3>", unsafe_allow_html=True)
-    st.markdown("<p class='body-font'>To be the power hub of africa</p>", unsafe_allow_html=True)
+    col1, col2 = st.columns([3, 1])
+    
+    with col1:
+        st.markdown("<h3 class='title-font'>Welcome</h3>", unsafe_allow_html=True)
+        st.markdown("<p class='body-font'>The Tekeze Hydropower Plant Maintenance Tracker app allows technicians to log field activities and equipment conditions in real time, enables engineers to verify technical details and diagnose issues, provides managers with clear oversight for decision-making and resource allocation, and supports planners & report writers in compiling accurate records for performance evaluation and future planning.</p>", unsafe_allow_html=True)
+        st.markdown("<h3 class='title-font'>Mission</h3>", unsafe_allow_html=True)
+        st.markdown("<p class='body-font'>To provide reliable and sustainable electric power through innovation technology, continuous learning, fairness and commitment.</p>", unsafe_allow_html=True)
+        st.markdown("<h3 class='title-font'>Vision</h3>", unsafe_allow_html=True)
+        st.markdown("<p class='body-font'>To be the power hub of africa</p>", unsafe_allow_html=True)
 
+    with col2:
+        st.markdown(
+            """
+            <div style="display: flex; align-items: center; justify-content: flex-end; margin-top: 10px;">
+                <img src="https://placehold.co/30x30/000000/FFFFFF/png?text=GH" alt="Developer" style="width: 30px; height: 30px; border-radius: 50%; margin-right: 5px;">
+                <span style="font-size: 14px;">Gebremedhin Hagos</span>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+        
     st.sidebar.subheader("Login / Sign Up")
     menu = ["Login", "Sign Up"]
     choice = st.sidebar.radio("Menu", menu)
@@ -324,6 +318,11 @@ def show_main_app():
 
 def show_report_form():
     """Displays the maintenance report submission form."""
+    try:
+        st.image("dam.jpg", width='stretch')
+    except FileNotFoundError:
+        st.image("https://placehold.co/600x200/A1C4FD/ffffff?text=Dam+Image", width='stretch')
+
     st.title("🛠️ Maintenance Report Form")
 
     with st.form("report_form", clear_on_submit=True):
@@ -341,15 +340,8 @@ def show_report_form():
         damage_type = st.text_input("Damage Type")
         action_taken = st.text_area("Action Taken")
         
-        # New photo upload feature
-        uploaded_photo = st.file_uploader("Upload a photo of the affected part", type=["jpg", "jpeg", "png"])
-        photo_data = None
-        if uploaded_photo:
-            photo_data = base64.b64encode(uploaded_photo.read()).decode('utf-8')
-            st.success("Photo uploaded successfully!")
-
         st.header("Status and Safety")
-        status = st.selectbox("Status", ["Submitted", "Needs Manager Review", "Approved", "Completed"])
+        status = st.selectbox("Status", ["Fully functional", "Functional but needs monitoring", "Temporarily functional (risk present)", "Not functional"])
         safety_condition = st.selectbox("Safety Condition", ["Safely completed", "Unsafe condition was observed", "Maintenance planform was not good"])
         
         st.header("Resources and Metrics")
@@ -357,7 +349,18 @@ def show_report_form():
         manpower_used = st.number_input("Manpower Used", min_value=0, step=1)
         total_time = st.number_input("Total Time Used (hours)", min_value=0.0, step=0.5)
         actual_activities = st.number_input("Actual Activities Done", min_value=0, step=1)
-        
+
+        # --- File Upload Feature ---
+        uploaded_file = st.file_uploader("Upload File (photo/video/docs)", type=["jpg", "jpeg", "png", "mp4", "pdf", "docx"])
+        # In a real app, you would upload to Firebase Storage and get a URL here.
+        # For this example, we will store a placeholder URL.
+        image_url = None
+        if uploaded_file:
+            # You would use a Firebase Storage library to upload the file
+            # and get a permanent URL to store in the Firestore document.
+            # Example: upload_file_to_storage(uploaded_file) -> "firebase_storage_url.png"
+            image_url = f"file_uploaded_{uploaded_file.name}"
+
         submitted = st.form_submit_button("Submit Report")
 
         if submitted:
@@ -379,9 +382,9 @@ def show_report_form():
                 'manpower_used': manpower_used,
                 'total_time': total_time,
                 'actual_activities': actual_activities,
-                'photo': photo_data, # Store the photo as a base64 string
                 'planned_manpower': 0, # Placeholder for manager input
                 'planned_time': 0.0, # Placeholder for manager input
+                'image_url': image_url # Store the URL or placeholder
             }
             if insert_report(report_data):
                 st.success("✅ Report submitted successfully!")
@@ -394,23 +397,10 @@ def show_my_reports(username):
     df = get_reports(username)
     if not df.empty:
         df_metrics = calculate_metrics(df)
-        
-        # Columns to display for the reporter
-        reporter_cols = ['id', 'report_date', 'reporter', 'functional_location', 'specific_location',
-                         'maintenance_type', 'equipment', 'affected_part',
-                         'condition_observed', 'diagnosis', 'damage_type', 'action_taken',
-                         'status', 'safety_condition', 'photo',
-                         'planned_activities', 'actual_activities', 'manpower_used', 'total_time']
-        
-        df_display = df_metrics[reporter_cols].copy()
-        
-        # Create a column config to display the photo
-        photo_col_config = {
-            "photo": st.column_config.ImageColumn("Photo", help="Photo of the affected part"),
-        }
-
-        # FIX: Changed use_container_width to width='stretch'
-        st.dataframe(df_display, column_config=photo_col_config, width='stretch')
+        st.dataframe(df_metrics[['id', 'report_date', 'reporter', 'functional_location',
+                                'planned_activities', 'actual_activities', 'Efficiency (%)',
+                                'total_time', 'planned_manpower', 'manpower_used', 'planned_time',
+                                'action_taken']])
     else:
         st.info("You haven't submitted any reports yet.")
 
@@ -421,58 +411,42 @@ def show_manager_dashboard():
     if not df_all.empty:
         df_metrics = calculate_metrics(df_all)
 
-        tab_data, tab_analytics = st.tabs(["All Reports", "Analytics"])
+        # Use st.data_editor to enable editing and save changes
+        edited_df = st.data_editor(
+            df_metrics,
+            column_config={
+                "id": st.column_config.NumberColumn("Report ID", help="Unique ID for each report", disabled=True),
+                "report_date": st.column_config.DateColumn("Report Date", format="YYYY-MM-DD", disabled=True),
+                "planned_manpower": st.column_config.NumberColumn("Planned Manpower", help="Number of people planned for the task", min_value=0, format="%d"),
+                "planned_time": st.column_config.NumberColumn("Planned Time (hrs)", help="Planned time to complete the task", min_value=0.0, format="%.2f"),
+                "Given Weight": st.column_config.NumberColumn("Given Weight", disabled=True, format="%.2f"),
+                "Actual Weight": st.column_config.NumberColumn("Actual Weight", disabled=True, format="%.2f"),
+                "Efficiency (%)": st.column_config.NumberColumn("Efficiency (%)", disabled=True, format="%.2f"),
+            },
+            hide_index=True
+        )
 
-        with tab_data:
-            # Use st.data_editor to enable editing and save changes
-            # FIX: Changed use_container_width to width='stretch'
-            edited_df = st.data_editor(
-                df_metrics,
-                column_config={
-                    "id": st.column_config.TextColumn("Report ID", help="Unique ID for each report", disabled=True),
-                    "report_date": st.column_config.DateColumn("Report Date", format="YYYY-MM-DD", disabled=True),
-                    "planned_manpower": st.column_config.NumberColumn("Planned Manpower", help="Number of people planned for the task", min_value=0, format="%d"),
-                    "planned_time": st.column_config.NumberColumn("Planned Time (hrs)", help="Planned time to complete the task", min_value=0.0, format="%.2f"),
-                    "Given Weight": st.column_config.NumberColumn("Given Weight", disabled=True, format="%.2f"),
-                    "Actual Weight": st.column_config.NumberColumn("Actual Weight", disabled=True, format="%.2f"),
-                    "Efficiency (%)": st.column_config.NumberColumn("Efficiency (%)", disabled=True, format="%.2f"),
-                },
-                hide_index=True,
-                width='stretch'
-            )
-
-            # Detect changes and update the database
-            if not edited_df.equals(df_metrics):
-                diff_df = edited_df.loc[(edited_df['planned_manpower'] != df_metrics['planned_manpower']) | 
-                                        (edited_df['planned_time'] != df_metrics['planned_time'])]
-                
-                for index, row in diff_df.iterrows():
-                    update_report(row['id'], row['planned_manpower'], row['planned_time'])
-                
-                st.success("Reports updated successfully!")
-                st.rerun()
-
-        with tab_analytics:
-            # Display performance metrics
-            avg_efficiency = edited_df["Efficiency (%)"].mean()
+        # Detect changes and update the database
+        if not edited_df.equals(df_metrics):
+            diff_df = edited_df.loc[(edited_df['planned_manpower'] != df_metrics['planned_manpower']) | 
+                                    (edited_df['planned_time'] != df_metrics['planned_time'])]
             
-            st.header("Performance Metrics")
-            st.metric("Average Efficiency", f"{avg_efficiency:.2f}%")
+            for index, row in diff_df.iterrows():
+                update_report(row['id'], row['planned_manpower'], row['planned_time'])
             
-            # Chart 1: Efficiency per Reporter
-            st.subheader("Average Efficiency per Reporter")
-            reporter_eff = edited_df.groupby("reporter")["Efficiency (%)"].mean().reset_index()
-            reporter_eff.columns = ["Reporter", "Average Efficiency (%)"]
-            st.bar_chart(reporter_eff.set_index("Reporter"))
+            st.success("Reports updated successfully!")
+            st.rerun()
 
-            # Chart 2: Efficiency over Time
-            st.subheader("Efficiency over Time")
-            # Ensure 'report_date' is a datetime object for charting
-            df_metrics['report_date'] = pd.to_datetime(df_metrics['report_date'])
-            df_time_series = df_metrics.sort_values('report_date').set_index('report_date')
-            df_time_series = df_time_series.rename(columns={"Efficiency (%)": "Efficiency"})
-            st.line_chart(df_time_series['Efficiency'])
-
+        # Display performance metrics
+        avg_efficiency = edited_df["Efficiency (%)"].mean()
+        
+        st.header("Performance Metrics")
+        st.metric("Average Efficiency", f"{avg_efficiency:.2f}%")
+        
+        st.subheader("Efficiency per Reporter")
+        reporter_eff = edited_df.groupby("reporter")["Efficiency (%)"].mean().reset_index()
+        reporter_eff.columns = ["Reporter", "Average Efficiency (%)"]
+        st.bar_chart(reporter_eff.set_index("Reporter"))
     else:
         st.info("No reports have been submitted yet.")
 
@@ -481,25 +455,35 @@ def show_manager_dashboard():
 def main():
     """Main function to run the Streamlit application."""
 
-    # Move EEP logo and developer name to the sidebar
-    with st.sidebar:
-        # FIX: Using the raw GitHub URL for the EEP logo
-        st.image("https://raw.githubusercontent.com/Gebremedhin1/tekeze-maintenance-tracker/main/EEP_logo.png", width='stretch')
-        st.markdown(
-            """
-            <div style="display: flex; align-items: center; justify-content: flex-start; margin-top: 10px;">
-                <img src="https://placehold.co/30x30/000000/FFFFFF/png?text=GH" alt="Developer" style="width: 30px; height: 30px; border-radius: 50%; margin-right: 5px;">
-                <span style="font-size: 14px;">Gebremedhin Hagos</span>
-            </div>
-            """,
-            unsafe_allow_html=True
-        )
-    
+    # Set up responsive styling for all elements
+    st.markdown(
+        """
+        <style>
+            .stTextInput, .stNumberInput, .stTextArea, .stSelectbox {
+                max-width: 100%;
+            }
+            @media (max-width: 600px) {
+                h1, h2, h3 { font-size: 1.5em; }
+                p, .body-font { font-size: 0.9em; }
+            }
+        </style>
+        """,
+        unsafe_allow_html=True
+    )
+
     # Title and Logo section
-    col_dam, col_title = st.columns([1, 3])
+    col_logo, col_dam, col_title = st.columns([1, 2, 4])
+    with col_logo:
+        try:
+            st.image("EEP_logo.png", width=100)
+        except FileNotFoundError:
+            st.image("https://placehold.co/100x100/A1C4FD/ffffff?text=TKZ", width=100)
     with col_dam:
-        # FIX: Using the raw GitHub URL for the dam image
-        st.image("https://raw.githubusercontent.com/Gebremedhin1/tekeze-maintenance-tracker/main/dam.jpg", width='stretch')
+        try:
+            st.image("dam.jpg", width=300)
+        except FileNotFoundError:
+            st.warning("dam.jpg not found. Using a placeholder image.")
+            st.image("https://placehold.co/600x200/A1C4FD/ffffff?text=Dam+Image", width=300)
     with col_title:
         st.title("Tekeze Hydropower Plant")
         st.subheader("Maintenance Tracker")
@@ -509,11 +493,10 @@ def main():
     # Step 1: Check Firebase initialization status
     if not st.session_state.firebase_initialized:
         with st.spinner("Connecting to the database..."):
-            # Step 2: Call the initialization function. If it fails, the app stops here.
             if not initialize_firebase():
                 return
     
-    # Step 3: Now that Firebase is guaranteed to be initialized, proceed with the app
+    # Step 2: Now that Firebase is guaranteed to be initialized, proceed with the app
     if not st.session_state.logged_in:
         show_login_signup()
     else:
