@@ -45,8 +45,9 @@ def initialize_firebase():
         # `_apps` is an internal dictionary of initialized apps.
         if not firebase_admin._apps:
             # Step 3: Create a credentials object from the config dictionary.
-            # This is what Firebase uses to authenticate with your project.
-            cred = credentials.Certificate(firebase_config)
+            # We explicitly convert `firebase_config` to a dict to ensure
+            # it is in the correct format for the Firebase library.
+            cred = credentials.Certificate(dict(firebase_config))
             
             # Step 4: Initialize the Firebase app with the credentials.
             firebase_admin.initialize_app(cred)
