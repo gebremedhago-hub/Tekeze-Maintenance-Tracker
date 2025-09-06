@@ -483,8 +483,8 @@ def main():
 
     # Move EEP logo and developer name to the sidebar
     with st.sidebar:
-        # FIX: Using a placeholder image for EEP logo to avoid FileNotFoundError
-        st.image("https://placehold.co/200x100/A1C4FD/ffffff?text=TKZ+EEP+LOGO", use_container_width=True)
+        # FIX: Using the raw GitHub URL for the EEP logo
+        st.image("https://raw.githubusercontent.com/Gebremedhin1/tekeze-maintenance-tracker/main/EEP_logo.png", use_container_width=True)
         st.markdown(
             """
             <div style="display: flex; align-items: center; justify-content: flex-start; margin-top: 10px;">
@@ -498,8 +498,8 @@ def main():
     # Title and Logo section
     col_dam, col_title = st.columns([1, 3])
     with col_dam:
-        # FIX: Using a placeholder image for the dam to avoid FileNotFoundError
-        st.image("https://placehold.co/600x200/A1C4FD/ffffff?text=Tekeze+Dam+Image", use_container_width=True)
+        # FIX: Using the raw GitHub URL for the dam image
+        st.image("https://raw.githubusercontent.com/Gebremedhin1/tekeze-maintenance-tracker/main/dam.jpg", use_container_width=True)
     with col_title:
         st.title("Tekeze Hydropower Plant")
         st.subheader("Maintenance Tracker")
