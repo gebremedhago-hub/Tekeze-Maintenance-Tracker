@@ -336,9 +336,11 @@ def show_main_app():
 def show_report_form():
     """Displays the maintenance report submission form."""
     try:
-        st.image("dam.jpg", width='stretch')
+        # --- MODIFIED LINE: Removed fixed width for better mobile layout ---
+        st.image("dam.jpg", use_column_width='always')
     except FileNotFoundError:
-        st.image("https://placehold.co/600x200/A1C4FD/ffffff?text=Dam+Image", width='stretch')
+        # --- MODIFIED LINE: Removed fixed width for better mobile layout ---
+        st.image("https://placehold.co/600x200/A1C4FD/ffffff?text=Dam+Image", use_column_width='always')
 
     st.title("🛠️ Maintenance Report Form")
 
@@ -367,11 +369,9 @@ def show_report_form():
         total_time = st.number_input("Total Time Used (hours)", min_value=0.0, step=0.5)
         actual_activities = st.number_input("Actual Activities Done", min_value=0, step=1)
         
-        # --- START OF NEW CODE ---
         # File uploader for photos/documents
         st.header("Attachments")
         uploaded_file = st.file_uploader("Attach Photo/Document", type=["jpg", "jpeg", "png", "pdf"], help="Supports JPG, PNG, and PDF. Max 1 MB file size per file.")
-        # --- END OF NEW CODE ---
         
         submitted = st.form_submit_button("Submit Report")
 
@@ -397,7 +397,6 @@ def show_report_form():
                 'planned_manpower': 0, # Placeholder for manager input
                 'planned_time': 0.0, # Placeholder for manager input
             }
-            # --- START OF NEW CODE ---
             # Handle uploaded file and add to report_data
             if uploaded_file is not None:
                 # Read the file as bytes
@@ -424,7 +423,6 @@ def show_report_form():
                     st.success("✅ Report submitted successfully!")
                 else:
                     st.error("❌ Failed to submit report. Please try again.")
-            # --- END OF NEW CODE ---
 
 def show_my_reports(username):
     """Displays a table of the user's submitted reports."""
@@ -500,17 +498,16 @@ def show_manager_dashboard():
 def main():
     """Main function to run the Streamlit application."""
 
+    # --- MODIFIED LINES: Removed columns for a simpler, mobile-friendly layout ---
     # Title and Logo section
-    col_dam, col_title = st.columns([1, 4])
-    with col_dam:
-        try:
-            st.image("dam.jpg", width=300)
-        except FileNotFoundError:
-            st.warning("dam.jpg not found. Using a placeholder image.")
-            st.image("https://placehold.co/600x200/A1C4FD/ffffff?text=Dam+Image", width=300)
-    with col_title:
-        st.title("Tekeze Hydropower Plant")
-        st.subheader("Maintenance Tracker")
+    try:
+        st.image("dam.jpg", use_column_width='always')
+    except FileNotFoundError:
+        st.warning("dam.jpg not found. Using a placeholder image.")
+        st.image("https://placehold.co/600x200/A1C4FD/ffffff?text=Dam+Image", use_column_width='always')
+        
+    st.title("Tekeze Hydropower Plant")
+    st.subheader("Maintenance Tracker")
 
     st.markdown("---")
     
