@@ -6,6 +6,8 @@ import pandas as pd
 import json
 import datetime
 import math
+import base64
+import io
 
 # --- ⚙️ Streamlit Session State ---
 # These variables persist across user interactions in the app.
@@ -365,6 +367,12 @@ def show_report_form():
         total_time = st.number_input("Total Time Used (hours)", min_value=0.0, step=0.5)
         actual_activities = st.number_input("Actual Activities Done", min_value=0, step=1)
         
+        # --- START OF NEW CODE ---
+        # File uploader for photos/documents
+        st.header("Attachments")
+        uploaded_file = st.file_uploader("Attach Photo/Document", type=["jpg", "jpeg", "png", "pdf"], help="Supports JPG, PNG, and PDF. Max 1 MB file size per file.")
+        # --- END OF NEW CODE ---
+        
         submitted = st.form_submit_button("Submit Report")
 
         if submitted:
@@ -389,10 +397,34 @@ def show_report_form():
                 'planned_manpower': 0, # Placeholder for manager input
                 'planned_time': 0.0, # Placeholder for manager input
             }
-            if insert_report(report_data):
-                st.success("✅ Report submitted successfully!")
+            # --- START OF NEW CODE ---
+            # Handle uploaded file and add to report_data
+            if uploaded_file is not None:
+                # Read the file as bytes
+                file_bytes = uploaded_file.getvalue()
+                
+                # Check for file size before encoding to avoid exceeding Firestore limits
+                if len(file_bytes) > 1024 * 1024: # 1 MB limit
+                    st.error("❌ The attached file is too large. Please upload a file smaller than 1 MB.")
+                else:
+                    # Encode bytes to Base64 string for storage in Firestore
+                    encoded_string = base64.b64encode(file_bytes).decode('utf-8')
+                    report_data['attached_file'] = {
+                        'filename': uploaded_file.name,
+                        'filetype': uploaded_file.type,
+                        'data_b64': encoded_string
+                    }
+                    if insert_report(report_data):
+                        st.success("✅ Report submitted successfully!")
+                    else:
+                        st.error("❌ Failed to submit report. Please try again.")
             else:
-                st.error("❌ Failed to submit report. Please try again.")
+                # If no file is attached, proceed with the report submission without the file field
+                if insert_report(report_data):
+                    st.success("✅ Report submitted successfully!")
+                else:
+                    st.error("❌ Failed to submit report. Please try again.")
+            # --- END OF NEW CODE ---
 
 def show_my_reports(username):
     """Displays a table of the user's submitted reports."""
