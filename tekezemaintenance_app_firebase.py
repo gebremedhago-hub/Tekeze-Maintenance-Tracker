@@ -225,7 +225,7 @@ def calculate_metrics(df):
     )
     
     # Re-order columns for better viewing
-    cols = ['id', 'reporter', 'start_date', 'functional_location', 'specific_location',
+    cols = ['id', 'reporter', 'report_date', 'functional_location', 'specific_location',
             'maintenance_type', 'equipment', 'affected_part',
             'condition_observed', 'diagnosis', 'damage_type', 'action_taken',
             'status', 'safety_condition',
@@ -398,7 +398,7 @@ def show_my_reports(username):
     df = get_reports(username)
     if not df.empty:
         df_metrics = calculate_metrics(df)
-        st.dataframe(df_metrics[['id', 'start_date', 'reporter', 'functional_location',
+        st.dataframe(df_metrics[['id', 'report_date', 'reporter', 'functional_location',
                                 'planned_activities', 'actual_activities', 'Efficiency (%)',
                                 'total_time', 'planned_manpower', 'manpower_used', 'planned_time',
                                 'action_taken']])
@@ -417,6 +417,7 @@ def show_manager_dashboard():
             df_metrics,
             column_config={
                 "id": st.column_config.NumberColumn("Report ID", help="Unique ID for each report", disabled=True),
+                "report_date": st.column_config.DateColumn("Report Date", format="YYYY-MM-DD", disabled=True),
                 "planned_manpower": st.column_config.NumberColumn("Planned Manpower", help="Number of people planned for the task", min_value=0, format="%d"),
                 "planned_time": st.column_config.NumberColumn("Planned Time (hrs)", help="Planned time to complete the task", min_value=0.0, format="%.2f"),
                 "Given Weight": st.column_config.NumberColumn("Given Weight", disabled=True, format="%.2f"),
