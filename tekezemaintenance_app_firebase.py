@@ -1,3 +1,37 @@
+# The MIT License (MIT)
+
+# Copyright (c) 2024 Gebremedhin Hagos
+
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+
+# of this software and associated documentation files (the "Software"), to deal
+
+# in the Software without restriction, including without limitation the rights
+
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+
+# copies of the Software, and to permit persons to whom the Software is
+
+# furnished to do so, subject to the following conditions:
+
+# The above copyright notice and this permission notice shall be included in all
+
+# copies or substantial portions of the Software.
+
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+
+# SOFTWARE.
+
 import streamlit as st
 import firebase_admin
 from firebase_admin import credentials, firestore
@@ -6,9 +40,6 @@ import pandas as pd
 import json
 import datetime
 import math
-from google.cloud.firestore_v1 import FieldFilter
-from google.cloud.exceptions import NotFound
-import re
 
 # --- ⚙️ Streamlit Session State ---
 # These variables persist across user interactions in the app.
@@ -22,9 +53,6 @@ if 'db' not in st.session_state:
     st.session_state['db'] = None
 if 'firebase_initialized' not in st.session_state:
     st.session_state['firebase_initialized'] = False
-if 'current_page' not in st.session_state:
-    st.session_state['current_page'] = 'login'
-
 
 # --- Firebase Setup ---
 
@@ -32,23 +60,43 @@ def initialize_firebase():
     """
     Initializes Firebase credentials from Streamlit secrets.
     Returns True if successful, False otherwise.
+    
+    This function first checks if Firebase is already initialized to avoid
+    re-initializing it every time a user interacts with the app.
+    
+    It then attempts to load the `firebase_config` from Streamlit's secrets,
+    which is the secure way to manage credentials in a hosted environment.
     """
     if st.session_state.firebase_initialized:
         return True
     
     try:
+        # Step 1: Access the secure Firebase configuration from Streamlit Secrets.
+        # This will fail if the `firebase_config` key is not in your secrets.toml file.
         firebase_config = st.secrets["firebase_config"]
+        
+        # Step 2: Check if a Firebase app instance has already been created.
+        # `_apps` is an internal dictionary of initialized apps.
         if not firebase_admin._apps:
+            # Step 3: Create a credentials object from the config dictionary.
+            # We explicitly convert `firebase_config` to a dict to ensure
+            # it is in the correct format for the Firebase library.
             cred = credentials.Certificate(dict(firebase_config))
+            
+            # Step 4: Initialize the Firebase app with the credentials.
             firebase_admin.initialize_app(cred)
             
+        # Step 5: Get a Firestore client instance and store it in session state.
         st.session_state.db = firestore.client()
         st.session_state.firebase_initialized = True
         return True
     except KeyError:
+        # This is the error you are currently facing. It means Streamlit can't
+        # find the `firebase_config` key in the secrets.
         st.error("Firebase configuration not found. Please ensure 'firebase_config' is set in Streamlit Secrets.")
         return False
     except Exception as e:
+        # A more general catch for other potential errors during initialization.
         st.error(f"Error initializing Firebase: {e}")
         return False
 
@@ -58,12 +106,14 @@ def login_user(username, password):
     """
     Authenticates a user against the Firestore database.
     """
+    # Use Firestore to get the document for the given username.
     user_ref = st.session_state.db.collection('users').document(username)
     user_doc = user_ref.get()
 
     if user_doc.exists:
         user_data = user_doc.to_dict()
         hashed_password = user_data.get('password')
+        # Use bcrypt to securely check the entered password against the stored hash.
         if hashed_password and bcrypt.checkpw(password.encode('utf-8'), hashed_password.encode('utf-8')):
             st.session_state.logged_in = True
             st.session_state.user = user_data
@@ -72,6 +122,7 @@ def login_user(username, password):
 
 def register_user(username, password, first_name, last_name, user_type):
     """Registers a new user in the Firestore database."""
+    # Hash the password before saving for security.
     hashed_password = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
     user_data = {
         'username': username,
@@ -80,6 +131,7 @@ def register_user(username, password, first_name, last_name, user_type):
         'last_name': last_name,
         'user_type': user_type
     }
+    # Save the new user document to the 'users' collection.
     user_ref = st.session_state.db.collection('users').document(username)
     user_ref.set(user_data)
     st.success("Registration successful! Please log in.")
@@ -113,11 +165,14 @@ def get_reports(username=None):
     """Fetches reports from the Firestore database. Fetches all if username is None."""
     reports_ref = st.session_state.db.collection('maintenance_reports')
     if username:
-        query = reports_ref.where(filter=FieldFilter('reporter', '==', username))
+        # Build a query to fetch reports for a specific user.
+        query = reports_ref.where('reporter', '==', username).order_by('report_date', direction=firestore.Query.DESCENDING)
     else:
-        query = reports_ref
+        # Build a query to fetch all reports.
+        query = reports_ref.order_by('report_date', direction=firestore.Query.DESCENDING)
 
     reports_list = []
+    # Stream the documents from the query result.
     for doc in query.stream():
         report = doc.to_dict()
         report['id'] = doc.id
@@ -167,15 +222,11 @@ def calculate_metrics(df):
     """Calculates all efficiency and weighted efficiency metrics based on the new logic."""
     df_metrics = df.copy()
     
-    # Fill NA values with 0 for calculation robustness
-    df_metrics = df_metrics.fillna(0)
-
     # Calculate total planned resources for each report first
-    df_metrics['total_planned_resource'] = df_metrics['planned_manpower'] + df_metrics['planned_time'] + df_metrics['planned_activities']
+    df_metrics['total_planned_resource'] = df_metrics['planned_manpower'].fillna(0) + df_metrics['planned_time'].fillna(0) + df_metrics['planned_activities'].fillna(0)
 
     # Filter reports for the last 30 days
-    last_month_start = (datetime.datetime.now() - datetime.timedelta(days=30)).date().isoformat()
-    
+    last_month_start = (datetime.datetime.now() - datetime.timedelta(days=30)).strftime('%Y-%m-%d')
     # Ensure 'report_date' is a string before comparison
     df_metrics['report_date'] = df_metrics['report_date'].apply(lambda x: x.isoformat() if isinstance(x, datetime.date) else x)
     df_last_month = df_metrics[df_metrics['report_date'] >= last_month_start].copy()
@@ -211,9 +262,9 @@ def calculate_metrics(df):
     cols = ['id', 'reporter', 'report_date', 'functional_location', 'specific_location',
             'maintenance_type', 'equipment', 'affected_part',
             'condition_observed', 'diagnosis', 'damage_type', 'action_taken',
-            'status', 'safety_condition', 'planned_activities', 'actual_activities',
-            'manpower_used', 'total_time', 'planned_manpower', 'planned_time',
-            'Given Weight', 'Actual Weight', 'Efficiency (%)', 'image_url']
+            'status', 'safety_condition',
+            'planned_activities', 'actual_activities', 'manpower_used', 'total_time',
+            'planned_manpower', 'planned_time', 'Given Weight', 'Actual Weight', 'Efficiency (%)']
     
     return df_metrics[cols]
 
@@ -232,16 +283,12 @@ def show_login_signup():
             font-family: "Times New Roman";
             font-size: 16px;
         }
-        @media (max-width: 600px) {
-            .body-font {
-                font-size: 14px;
-            }
-        }
         </style>
         """,
         unsafe_allow_html=True
     )
     
+    # Place text and developer info in columns
     col1, col2 = st.columns([3, 1])
     
     with col1:
@@ -349,18 +396,7 @@ def show_report_form():
         manpower_used = st.number_input("Manpower Used", min_value=0, step=1)
         total_time = st.number_input("Total Time Used (hours)", min_value=0.0, step=0.5)
         actual_activities = st.number_input("Actual Activities Done", min_value=0, step=1)
-
-        # --- File Upload Feature ---
-        uploaded_file = st.file_uploader("Upload File (photo/video/docs)", type=["jpg", "jpeg", "png", "mp4", "pdf", "docx"])
-        # In a real app, you would upload to Firebase Storage and get a URL here.
-        # For this example, we will store a placeholder URL.
-        image_url = None
-        if uploaded_file:
-            # You would use a Firebase Storage library to upload the file
-            # and get a permanent URL to store in the Firestore document.
-            # Example: upload_file_to_storage(uploaded_file) -> "firebase_storage_url.png"
-            image_url = f"file_uploaded_{uploaded_file.name}"
-
+        
         submitted = st.form_submit_button("Submit Report")
 
         if submitted:
@@ -384,7 +420,6 @@ def show_report_form():
                 'actual_activities': actual_activities,
                 'planned_manpower': 0, # Placeholder for manager input
                 'planned_time': 0.0, # Placeholder for manager input
-                'image_url': image_url # Store the URL or placeholder
             }
             if insert_report(report_data):
                 st.success("✅ Report submitted successfully!")
@@ -455,22 +490,6 @@ def show_manager_dashboard():
 def main():
     """Main function to run the Streamlit application."""
 
-    # Set up responsive styling for all elements
-    st.markdown(
-        """
-        <style>
-            .stTextInput, .stNumberInput, .stTextArea, .stSelectbox {
-                max-width: 100%;
-            }
-            @media (max-width: 600px) {
-                h1, h2, h3 { font-size: 1.5em; }
-                p, .body-font { font-size: 0.9em; }
-            }
-        </style>
-        """,
-        unsafe_allow_html=True
-    )
-
     # Title and Logo section
     col_logo, col_dam, col_title = st.columns([1, 2, 4])
     with col_logo:
@@ -493,10 +512,11 @@ def main():
     # Step 1: Check Firebase initialization status
     if not st.session_state.firebase_initialized:
         with st.spinner("Connecting to the database..."):
+            # Step 2: Call the initialization function. If it fails, the app stops here.
             if not initialize_firebase():
                 return
     
-    # Step 2: Now that Firebase is guaranteed to be initialized, proceed with the app
+    # Step 3: Now that Firebase is guaranteed to be initialized, proceed with the app
     if not st.session_state.logged_in:
         show_login_signup()
     else:
@@ -504,6 +524,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
