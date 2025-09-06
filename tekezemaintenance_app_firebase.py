@@ -6,6 +6,7 @@ import pandas as pd
 import json
 import datetime
 import math
+import base64
 
 # --- ⚙️ Streamlit Session State ---
 # These variables persist across user interactions in the app.
@@ -58,7 +59,7 @@ def initialize_firebase():
         return True
     except KeyError:
         # This is the error you are currently facing. It means Streamlit can't
-        # find the `firebase_config` key in the secrets.
+        # find the `firebase_config` key in the secrets.toml file.
         st.error("Firebase configuration not found. Please ensure 'firebase_config' is set in Streamlit Secrets.")
         return False
     except Exception as e:
@@ -317,11 +318,6 @@ def show_main_app():
 
 def show_report_form():
     """Displays the maintenance report submission form."""
-    try:
-        st.image("dam.jpg", width='stretch')
-    except FileNotFoundError:
-        st.image("https://placehold.co/600x200/A1C4FD/ffffff?text=Dam+Image", width='stretch')
-
     st.title("🛠️ Maintenance Report Form")
 
     with st.form("report_form", clear_on_submit=True):
@@ -339,8 +335,15 @@ def show_report_form():
         damage_type = st.text_input("Damage Type")
         action_taken = st.text_area("Action Taken")
         
+        # New photo upload feature
+        uploaded_photo = st.file_uploader("Upload a photo of the affected part", type=["jpg", "jpeg", "png"])
+        photo_data = None
+        if uploaded_photo:
+            photo_data = base64.b64encode(uploaded_photo.read()).decode('utf-8')
+            st.success("Photo uploaded successfully!")
+
         st.header("Status and Safety")
-        status = st.selectbox("Status", ["Fully functional", "Functional but needs monitoring", "Temporarily functional (risk present)", "Not functional"])
+        status = st.selectbox("Status", ["Submitted", "Needs Manager Review", "Approved", "Completed"])
         safety_condition = st.selectbox("Safety Condition", ["Safely completed", "Unsafe condition was observed", "Maintenance planform was not good"])
         
         st.header("Resources and Metrics")
@@ -370,6 +373,7 @@ def show_report_form():
                 'manpower_used': manpower_used,
                 'total_time': total_time,
                 'actual_activities': actual_activities,
+                'photo': photo_data, # Store the photo as a base64 string
                 'planned_manpower': 0, # Placeholder for manager input
                 'planned_time': 0.0, # Placeholder for manager input
             }
@@ -389,10 +393,17 @@ def show_my_reports(username):
         reporter_cols = ['id', 'report_date', 'reporter', 'functional_location', 'specific_location',
                          'maintenance_type', 'equipment', 'affected_part',
                          'condition_observed', 'diagnosis', 'damage_type', 'action_taken',
-                         'status', 'safety_condition',
+                         'status', 'safety_condition', 'photo',
                          'planned_activities', 'actual_activities', 'manpower_used', 'total_time']
-                         
-        st.dataframe(df_metrics[reporter_cols])
+        
+        df_display = df_metrics[reporter_cols].copy()
+        
+        # Create a column config to display the photo
+        photo_col_config = {
+            "photo": st.column_config.ImageColumn("Photo", help="Photo of the affected part"),
+        }
+
+        st.dataframe(df_display, column_config=photo_col_config)
     else:
         st.info("You haven't submitted any reports yet.")
 
@@ -403,42 +414,56 @@ def show_manager_dashboard():
     if not df_all.empty:
         df_metrics = calculate_metrics(df_all)
 
-        # Use st.data_editor to enable editing and save changes
-        edited_df = st.data_editor(
-            df_metrics,
-            column_config={
-                "id": st.column_config.NumberColumn("Report ID", help="Unique ID for each report", disabled=True),
-                "report_date": st.column_config.DateColumn("Report Date", format="YYYY-MM-DD", disabled=True),
-                "planned_manpower": st.column_config.NumberColumn("Planned Manpower", help="Number of people planned for the task", min_value=0, format="%d"),
-                "planned_time": st.column_config.NumberColumn("Planned Time (hrs)", help="Planned time to complete the task", min_value=0.0, format="%.2f"),
-                "Given Weight": st.column_config.NumberColumn("Given Weight", disabled=True, format="%.2f"),
-                "Actual Weight": st.column_config.NumberColumn("Actual Weight", disabled=True, format="%.2f"),
-                "Efficiency (%)": st.column_config.NumberColumn("Efficiency (%)", disabled=True, format="%.2f"),
-            },
-            hide_index=True
-        )
+        tab_data, tab_analytics = st.tabs(["All Reports", "Analytics"])
 
-        # Detect changes and update the database
-        if not edited_df.equals(df_metrics):
-            diff_df = edited_df.loc[(edited_df['planned_manpower'] != df_metrics['planned_manpower']) | 
-                                    (edited_df['planned_time'] != df_metrics['planned_time'])]
-            
-            for index, row in diff_df.iterrows():
-                update_report(row['id'], row['planned_manpower'], row['planned_time'])
-            
-            st.success("Reports updated successfully!")
-            st.rerun()
+        with tab_data:
+            # Use st.data_editor to enable editing and save changes
+            edited_df = st.data_editor(
+                df_metrics,
+                column_config={
+                    "id": st.column_config.TextColumn("Report ID", help="Unique ID for each report", disabled=True),
+                    "report_date": st.column_config.DateColumn("Report Date", format="YYYY-MM-DD", disabled=True),
+                    "planned_manpower": st.column_config.NumberColumn("Planned Manpower", help="Number of people planned for the task", min_value=0, format="%d"),
+                    "planned_time": st.column_config.NumberColumn("Planned Time (hrs)", help="Planned time to complete the task", min_value=0.0, format="%.2f"),
+                    "Given Weight": st.column_config.NumberColumn("Given Weight", disabled=True, format="%.2f"),
+                    "Actual Weight": st.column_config.NumberColumn("Actual Weight", disabled=True, format="%.2f"),
+                    "Efficiency (%)": st.column_config.NumberColumn("Efficiency (%)", disabled=True, format="%.2f"),
+                },
+                hide_index=True
+            )
 
-        # Display performance metrics
-        avg_efficiency = edited_df["Efficiency (%)"].mean()
-        
-        st.header("Performance Metrics")
-        st.metric("Average Efficiency", f"{avg_efficiency:.2f}%")
-        
-        st.subheader("Efficiency per Reporter")
-        reporter_eff = edited_df.groupby("reporter")["Efficiency (%)"].mean().reset_index()
-        reporter_eff.columns = ["Reporter", "Average Efficiency (%)"]
-        st.bar_chart(reporter_eff.set_index("Reporter"))
+            # Detect changes and update the database
+            if not edited_df.equals(df_metrics):
+                diff_df = edited_df.loc[(edited_df['planned_manpower'] != df_metrics['planned_manpower']) | 
+                                        (edited_df['planned_time'] != df_metrics['planned_time'])]
+                
+                for index, row in diff_df.iterrows():
+                    update_report(row['id'], row['planned_manpower'], row['planned_time'])
+                
+                st.success("Reports updated successfully!")
+                st.rerun()
+
+        with tab_analytics:
+            # Display performance metrics
+            avg_efficiency = edited_df["Efficiency (%)"].mean()
+            
+            st.header("Performance Metrics")
+            st.metric("Average Efficiency", f"{avg_efficiency:.2f}%")
+            
+            # Chart 1: Efficiency per Reporter
+            st.subheader("Average Efficiency per Reporter")
+            reporter_eff = edited_df.groupby("reporter")["Efficiency (%)"].mean().reset_index()
+            reporter_eff.columns = ["Reporter", "Average Efficiency (%)"]
+            st.bar_chart(reporter_eff.set_index("Reporter"))
+
+            # Chart 2: Efficiency over Time
+            st.subheader("Efficiency over Time")
+            # Ensure 'report_date' is a datetime object for charting
+            df_metrics['report_date'] = pd.to_datetime(df_metrics['report_date'])
+            df_time_series = df_metrics.sort_values('report_date').set_index('report_date')
+            df_time_series = df_time_series.rename(columns={"Efficiency (%)": "Efficiency"})
+            st.line_chart(df_time_series['Efficiency'])
+
     else:
         st.info("No reports have been submitted yet.")
 
@@ -450,9 +475,9 @@ def main():
     # Move EEP logo and developer name to the sidebar
     with st.sidebar:
         try:
-            st.image("EEP_logo.png", width=100)
+            st.image("EEP_logo.png", use_column_width=True)
         except FileNotFoundError:
-            st.image("https://placehold.co/100x100/A1C4FD/ffffff?text=TKZ", width=100)
+            st.image("https://placehold.co/200x100/A1C4FD/ffffff?text=TKZ+EEP+LOGO", use_column_width=True)
         st.markdown(
             """
             <div style="display: flex; align-items: center; justify-content: flex-start; margin-top: 10px;">
@@ -464,13 +489,13 @@ def main():
         )
     
     # Title and Logo section
-    col_dam, col_title = st.columns([1, 4])
+    col_dam, col_title = st.columns([1, 3])
     with col_dam:
         try:
-            st.image("dam.jpg", width=300)
+            st.image("dam.jpg", use_column_width=True)
         except FileNotFoundError:
             st.warning("dam.jpg not found. Using a placeholder image.")
-            st.image("https://placehold.co/600x200/A1C4FD/ffffff?text=Dam+Image", width=300)
+            st.image("https://placehold.co/600x200/A1C4FD/ffffff?text=Dam+Image", use_column_width=True)
     with col_title:
         st.title("Tekeze Hydropower Plant")
         st.subheader("Maintenance Tracker")
