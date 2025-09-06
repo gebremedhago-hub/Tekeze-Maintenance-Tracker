@@ -226,11 +226,11 @@ def calculate_metrics(df):
     
     # Re-order columns for better viewing
     cols = ['id', 'reporter', 'report_date', 'functional_location', 'specific_location',
-             'maintenance_type', 'equipment', 'affected_part',
-             'condition_observed', 'diagnosis', 'damage_type', 'action_taken',
-             'status', 'safety_condition',
-             'planned_activities', 'actual_activities', 'manpower_used', 'total_time',
-             'planned_manpower', 'planned_time', 'Given Weight', 'Actual Weight', 'Efficiency (%)']
+            'maintenance_type', 'equipment', 'affected_part',
+            'condition_observed', 'diagnosis', 'damage_type', 'action_taken',
+            'status', 'safety_condition',
+            'planned_activities', 'actual_activities', 'manpower_used', 'total_time',
+            'planned_manpower', 'planned_time', 'Given Weight', 'Actual Weight', 'Efficiency (%)']
     
     return df_metrics[cols]
 
@@ -265,18 +265,19 @@ def show_login_signup():
         st.markdown("<h3 class='title-font'>Vision</h3>", unsafe_allow_html=True)
         st.markdown("<p class='body-font'>To be the power hub of africa</p>", unsafe_allow_html=True)
 
+    # This section now places the EEP logo and developer name vertically
     st.sidebar.markdown(
         """
         <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; margin-bottom: 20px;">
             <div style="text-align: center;">
-                <img src="https://placehold.co/100x100/A1C4FD/ffffff?text=TKZ" alt="EEP Logo" style="width: 100px; height: 100px; margin-bottom: 10px;">
+                <img src="https://placehold.co/100x100/A1C4FD/ffffff?text=EEP+Logo" alt="EEP Logo" style="width: 100px; height: 100px; margin-bottom: 10px;">
                 <span style="font-size: 14px; font-weight: bold;">Gebremedhin Hagos</span>
             </div>
         </div>
         """,
         unsafe_allow_html=True
     )
-        
+    
     st.sidebar.subheader("Login / Sign Up")
     menu = ["Login", "Sign Up"]
     choice = st.sidebar.radio("Menu", menu)
@@ -441,7 +442,7 @@ def show_manager_dashboard():
         # Detect changes and update the database
         if not edited_df.equals(df_metrics):
             diff_df = edited_df.loc[(edited_df['planned_manpower'] != df_metrics['planned_manpower']) | 
-                                     (edited_df['planned_time'] != df_metrics['planned_time'])]
+                                    (edited_df['planned_time'] != df_metrics['planned_time'])]
             
             for index, row in diff_df.iterrows():
                 update_report(row['id'], row['planned_manpower'], row['planned_time'])
