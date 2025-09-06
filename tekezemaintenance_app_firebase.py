@@ -1,6 +1,6 @@
 import streamlit as st
 import firebase_admin
-from firebase_admin import credentials, firestore
+from firebase_admin import credentials, firestore, auth
 import bcrypt
 import pandas as pd
 import json
@@ -50,7 +50,7 @@ def initialize_firebase():
         st.error(f"Error initializing Firebase: {e}")
         return False
 
-# --- User Authentication Functions ---
+# --- User Authentication & Management Functions ---
 
 def login_user(username, password):
     """
@@ -68,7 +68,7 @@ def login_user(username, password):
             return True
     return False
 
-def register_user(username, password, first_name, last_name, user_type):
+def register_user(username, password, first_name, last_name, user_type, email):
     """Registers a new user in the Firestore database."""
     hashed_password = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
     user_data = {
@@ -76,12 +76,28 @@ def register_user(username, password, first_name, last_name, user_type):
         'password': hashed_password,
         'first_name': first_name,
         'last_name': last_name,
-        'user_type': user_type
+        'user_type': user_type,
+        'email': email
     }
     user_ref = st.session_state.db.collection('users').document(username)
     user_ref.set(user_data)
     st.success("Registration successful! Please log in.")
     return True
+
+def change_password(username, old_password, new_password):
+    """Changes the password for a logged-in user."""
+    user_ref = st.session_state.db.collection('users').document(username)
+    user_doc = user_ref.get()
+
+    if user_doc.exists:
+        user_data = user_doc.to_dict()
+        hashed_password = user_data.get('password')
+        
+        if hashed_password and bcrypt.checkpw(old_password.encode('utf-8'), hashed_password.encode('utf-8')):
+            new_hashed_password = bcrypt.hashpw(new_password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+            user_ref.update({'password': new_hashed_password})
+            return True
+    return False
 
 # --- Data Handling Functions for Firestore ---
 
@@ -105,6 +121,20 @@ def update_report(report_id, planned_manpower, planned_time):
         return True
     except Exception as e:
         st.error(f"Failed to update report: {e}")
+        return False
+
+def delete_report(report_id):
+    """Deletes a report from the Firestore database."""
+    try:
+        # Delete the report document
+        st.session_state.db.collection('maintenance_reports').document(report_id).delete()
+        # Also delete any associated comments
+        comments_ref = st.session_state.db.collection('comments').where('report_id', '==', report_id)
+        for comment_doc in comments_ref.stream():
+            comment_doc.reference.delete()
+        return True
+    except Exception as e:
+        st.error(f"Failed to delete report: {e}")
         return False
 
 def get_reports(username=None):
@@ -198,15 +228,18 @@ def calculate_metrics(df):
     df_metrics["effective_time"] = df_metrics.apply(calculate_effective_time, axis=1)
     df_metrics['actual_activities'] = df_metrics['actual_activities'].fillna(0)
 
+    # Calculate Given Weight based on total planned resources
     if total_resource_sum > 0:
         df_metrics["Given Weight"] = (df_metrics['total_planned_resource'] / total_resource_sum) * 100
-        
-        df_metrics['actual_resource_sum'] = df_metrics['effective_manpower'] + df_metrics['effective_time'] + df_metrics['actual_activities']
-        df_metrics["Actual Weight"] = (df_metrics['actual_resource_sum'] / total_resource_sum) * 100
-        
     else:
         df_metrics["Given Weight"] = 0
-        df_metrics["Actual Weight"] = 0
+    
+    # Calculate Actual Weight based on effective resources
+    actual_resource_sum = (df_metrics['effective_manpower'] + df_metrics['effective_time'] + df_metrics['actual_activities']).sum()
+    if actual_resource_sum > 0:
+        df_metrics['Actual Weight'] = (df_metrics['effective_manpower'] + df_metrics['effective_time'] + df_metrics['actual_activities']) / actual_resource_sum * 100
+    else:
+        df_metrics['Actual Weight'] = 0
 
     df_metrics["Efficiency (%)"] = df_metrics.apply(
         lambda row: (row["Actual Weight"] / row["Given Weight"]) * 100
@@ -350,22 +383,23 @@ def show_login_signup():
 
     if choice == "Sign Up":
         st.sidebar.subheader("Create New Account")
-        new_user = st.sidebar.text_input("Username")
-        new_pass = st.sidebar.text_input("Password", type="password")
-        new_first_name = st.sidebar.text_input("First Name")
-        new_last_name = st.sidebar.text_input("Last Name")
+        new_user = st.sidebar.text_input("Username", key="reg_user")
+        new_pass = st.sidebar.text_input("Password", type="password", key="reg_pass")
+        new_first_name = st.sidebar.text_input("First Name", key="reg_first")
+        new_last_name = st.sidebar.text_input("Last Name", key="reg_last")
+        new_email = st.sidebar.text_input("Email", key="reg_email")
         new_user_type = st.sidebar.selectbox("User Type", ["Maintenance Staff", "Operator", "Manager"])
         if st.sidebar.button("Create Account"):
             try:
-                if register_user(new_user, new_pass, new_first_name, new_last_name, new_user_type):
+                if register_user(new_user, new_pass, new_first_name, new_last_name, new_user_type, new_email):
                     st.rerun()
             except Exception as e:
                 st.error(f"Registration failed: {e}")
 
     elif choice == "Login":
         st.sidebar.subheader("Login to your Account")
-        username = st.sidebar.text_input("Username")
-        password = st.sidebar.text_input("Password", type="password")
+        username = st.sidebar.text_input("Username", key="login_user")
+        password = st.sidebar.text_input("Password", type="password", key="login_pass")
         if st.sidebar.button("Login"):
             try:
                 if login_user(username, password):
@@ -378,14 +412,12 @@ def show_login_signup():
 def show_main_app():
     """Displays the main application interface after a user logs in."""
     st.sidebar.write(f"Logged in as: **{st.session_state.user['first_name']} {st.session_state.user['last_name']}**")
+    
+    app_mode = st.sidebar.radio("Navigation", ["Submit Report", "My Reports", "Manager Dashboard", "Account Settings"])
+    
     if st.sidebar.button("Logout"):
         st.session_state.clear()
         st.rerun()
-
-    if st.session_state.user['user_type'] == "Manager":
-        app_mode = st.sidebar.radio("Navigation", ["Submit Report", "My Reports", "Manager Dashboard"])
-    else:
-        app_mode = st.sidebar.radio("Navigation", ["Submit Report", "My Reports"])
 
     if app_mode == "Submit Report":
         show_report_form()
@@ -396,6 +428,31 @@ def show_main_app():
             show_manager_dashboard()
         else:
             st.error("You do not have permission to view this dashboard.")
+    elif app_mode == "Account Settings":
+        show_account_settings()
+
+def show_account_settings():
+    """Displays the account settings page for a user to change their password."""
+    st.header("🔑 Change Your Password")
+    
+    with st.form("change_password_form"):
+        old_password = st.text_input("Enter your old password", type="password")
+        new_password = st.text_input("Enter your new password", type="password")
+        confirm_password = st.text_input("Confirm your new password", type="password")
+        
+        submitted = st.form_submit_button("Change Password")
+        
+        if submitted:
+            if not old_password or not new_password or not confirm_password:
+                st.error("All fields are required.")
+            elif new_password != confirm_password:
+                st.error("New passwords do not match.")
+            else:
+                if change_password(st.session_state.user['username'], old_password, new_password):
+                    st.success("✅ Password changed successfully!")
+                else:
+                    st.error("❌ Failed to change password. Please check your old password and try again.")
+    st.info("To recover a forgotten password, please contact an administrator.")
 
 def show_report_form():
     """Displays the maintenance report submission form."""
@@ -555,28 +612,52 @@ def show_manager_dashboard():
             # --- Data Editing and Export ---
             st.header("All Reports (Editable)")
             
-            # Add a button to view details for each row
+            # Make a copy to avoid modifying the original DataFrame
             edited_df = filtered_df.copy()
-            edited_df['View Details'] = edited_df['id'].apply(lambda x: st.button("View", key=f'view_{x}'))
 
-            # The view details buttons are now functional
-            for index, row in edited_df.iterrows():
-                if row['View Details']:
-                    st.session_state.selected_report_id = row['id']
-                    st.rerun()
+            # Add "View Details" button and a "Delete" button as columns in the data editor
+            edited_df['View Details'] = edited_df['id'].apply(lambda x: f"View_{x}")
+            edited_df['Delete Report'] = edited_df['id'].apply(lambda x: f"Delete_{x}")
+
+            # Define which columns are editable
+            column_config = {
+                "planned_manpower": st.column_config.NumberColumn("Planned Manpower", required=True),
+                "planned_time": st.column_config.NumberColumn("Planned Time (hrs)", required=True),
+                "View Details": st.column_config.ButtonColumn("View", help="Click to view details"),
+                "Delete Report": st.column_config.ButtonColumn("Delete", help="Click to delete this report")
+            }
 
             # Display the data editor
-            st.dataframe(
+            edited_data = st.data_editor(
                 edited_df[['id', 'reporter', 'report_date', 'functional_location', 'equipment',
-                           'planned_manpower', 'planned_time', 'manpower_used', 'total_time',
-                           'Efficiency (%)', 'View Details']]
+                           'planned_manpower', 'planned_time', 'Given Weight', 'Actual Weight',
+                           'Efficiency (%)', 'View Details', 'Delete Report']],
+                column_config=column_config,
+                hide_index=True,
+                use_container_width=True
             )
 
-            # Detect changes and update the database
-            if not edited_df.equals(filtered_df):
-                 st.write("Changes detected. Not implemented yet to avoid unintended writes to database.")
-                 st.write("Please refresh to clear changes.")
+            # Process the edited data and delete requests
+            if edited_data is not None:
+                # Check for edited rows and update Firestore
+                if not edited_data.equals(edited_df):
+                    for index, row in edited_data.iterrows():
+                        original_row = edited_df.loc[edited_df['id'] == row['id']].iloc[0]
+                        if row['planned_manpower'] != original_row['planned_manpower'] or row['planned_time'] != original_row['planned_time']:
+                            update_report(row['id'], row['planned_manpower'], row['planned_time'])
+                            st.success(f"Updated planned values for report {row['id']}")
+                    st.rerun()
 
+                # Handle button clicks
+                for index, row in edited_data.iterrows():
+                    if row['View Details']:
+                        st.session_state.selected_report_id = row['id']
+                        st.rerun()
+                    if row['Delete Report']:
+                        if delete_report(row['id']):
+                            st.success(f"Report {row['id']} and its comments have been deleted.")
+                            st.rerun()
+            
             # CSV Download Link
             st.markdown(create_csv_download_link(filtered_df), unsafe_allow_html=True)
 
@@ -590,7 +671,7 @@ def show_manager_dashboard():
 
 def main():
     """Main function to run the Streamlit application."""
- # --- PWA Configuration (Added to the beginning of main) ---
+    # --- PWA Configuration (Added to the beginning of main) ---
     st.markdown("""
         <link rel="manifest" href="/manifest.json">
         <script>
@@ -603,7 +684,7 @@ def main():
           }
         </script>
     """, unsafe_allow_html=True)
-     # --- App UI ---
+    # --- App UI ---
     try:
         st.image("dam.jpg", use_container_width=True)
     except FileNotFoundError:
