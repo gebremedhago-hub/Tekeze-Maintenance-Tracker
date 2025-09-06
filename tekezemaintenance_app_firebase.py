@@ -336,11 +336,11 @@ def show_main_app():
 def show_report_form():
     """Displays the maintenance report submission form."""
     try:
-        # --- MODIFIED LINE: Removed fixed width for better mobile layout ---
-        st.image("dam.jpg", use_column_width='always')
+        # --- MODIFIED LINE: Updated to use_container_width ---
+        st.image("dam.jpg", use_container_width=True)
     except FileNotFoundError:
-        # --- MODIFIED LINE: Removed fixed width for better mobile layout ---
-        st.image("https://placehold.co/600x200/A1C4FD/ffffff?text=Dam+Image", use_column_width='always')
+        # --- MODIFIED LINE: Updated to use_container_width ---
+        st.image("https://placehold.co/600x200/A1C4FD/ffffff?text=Dam+Image", use_container_width=True)
 
     st.title("🛠️ Maintenance Report Form")
 
@@ -501,10 +501,10 @@ def main():
     # --- MODIFIED LINES: Removed columns for a simpler, mobile-friendly layout ---
     # Title and Logo section
     try:
-        st.image("dam.jpg", use_column_width='always')
+        st.image("dam.jpg", use_container_width=True)
     except FileNotFoundError:
         st.warning("dam.jpg not found. Using a placeholder image.")
-        st.image("https://placehold.co/600x200/A1C4FD/ffffff?text=Dam+Image", use_column_width='always')
+        st.image("https://placehold.co/600x200/A1C4FD/ffffff?text=Dam+Image", use_container_width=True)
         
     st.title("Tekeze Hydropower Plant")
     st.subheader("Maintenance Tracker")
