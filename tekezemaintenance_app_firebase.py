@@ -590,7 +590,20 @@ def show_manager_dashboard():
 
 def main():
     """Main function to run the Streamlit application."""
-
+ # --- PWA Configuration (Added to the beginning of main) ---
+    st.markdown("""
+        <link rel="manifest" href="/manifest.json">
+        <script>
+          if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.register('/service-worker.js').then(function(reg) {
+              console.log('Service Worker registered!');
+            }).catch(function(err) {
+              console.log('Service Worker registration failed: ', err);
+            });
+          }
+        </script>
+    """, unsafe_allow_html=True)
+     # --- App UI ---
     try:
         st.image("dam.jpg", use_container_width=True)
     except FileNotFoundError:
@@ -614,6 +627,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
