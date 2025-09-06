@@ -30,29 +30,16 @@ def initialize_firebase():
     """
     Initializes Firebase credentials from Streamlit secrets.
     Returns True if successful, False otherwise.
-    
-    This function first checks if Firebase is already initialized to avoid
-    re-initializing it every time a user interacts with the app.
-    
-    It then attempts to load the `firebase_config` from Streamlit's secrets,
-    which is the secure way to manage credentials in a hosted environment.
     """
     if st.session_state.firebase_initialized:
         return True
     
     try:
-        # Step 1: Access the secure Firebase configuration from Streamlit Secrets.
         firebase_config = st.secrets["firebase_config"]
-        
-        # Step 2: Check if a Firebase app instance has already been created.
         if not firebase_admin._apps:
-            # Step 3: Create a credentials object from the config dictionary.
             cred = credentials.Certificate(dict(firebase_config))
-            
-            # Step 4: Initialize the Firebase app with the credentials.
             firebase_admin.initialize_app(cred)
             
-        # Step 5: Get a Firestore client instance and store it in session state.
         st.session_state.db = firestore.client()
         st.session_state.firebase_initialized = True
         return True
@@ -135,6 +122,27 @@ def get_reports(username=None):
         reports_list.append(report)
     
     return pd.DataFrame(reports_list)
+
+def add_comment_to_report(report_id, user, comment):
+    """Adds a new comment to a specific report."""
+    try:
+        comment_data = {
+            'report_id': report_id,
+            'user': user,
+            'comment': comment,
+            'timestamp': firestore.SERVER_TIMESTAMP
+        }
+        st.session_state.db.collection('comments').add(comment_data)
+        return True
+    except Exception as e:
+        st.error(f"Failed to add comment: {e}")
+        return False
+
+def get_comments_for_report(report_id):
+    """Fetches all comments for a specific report in real-time."""
+    comments_ref = st.session_state.db.collection('comments').where('report_id', '==', report_id).order_by('timestamp')
+    comments = comments_ref.stream()
+    return [comment.to_dict() for comment in comments]
 
 # --- 📊 Data Analysis Functions ---
 
@@ -223,7 +231,7 @@ def create_csv_download_link(df, filename="reports.csv"):
     return href
 
 def show_detailed_report(report_id, df):
-    """Displays a detailed view of a single report."""
+    """Displays a detailed view of a single report with comments."""
     report = df[df['id'] == report_id].iloc[0]
     st.header(f"Report Details: {report['id']}")
     
@@ -276,6 +284,22 @@ def show_detailed_report(report_id, df):
             )
         except (base64.binascii.Error, TypeError) as e:
             st.warning(f"Could not display attached file. Data may be corrupted. {e}")
+
+    # --- Comments Section ---
+    st.subheader("Comments")
+    comment_box = st.text_area("Add a comment:", key="comment_box")
+    if st.button("Post Comment", key="post_comment_button"):
+        if comment_box:
+            add_comment_to_report(report_id, st.session_state.user['username'], comment_box)
+            st.rerun()
+
+    # Display comments in real-time
+    comments = get_comments_for_report(report_id)
+    if comments:
+        for comment in comments:
+            st.markdown(f"**{comment['user']}**: {comment['comment']}", unsafe_allow_html=True)
+    else:
+        st.info("No comments yet. Be the first to add one!")
 
 
 # --- 🖥️ Streamlit UI Components ---
@@ -549,8 +573,6 @@ def show_manager_dashboard():
             )
 
             # Detect changes and update the database
-            # This part is slightly simplified to use the 'edited_df' for detection.
-            # A more robust solution would track changes explicitly.
             if not edited_df.equals(filtered_df):
                  st.write("Changes detected. Not implemented yet to avoid unintended writes to database.")
                  st.write("Please refresh to clear changes.")
@@ -592,6 +614,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
