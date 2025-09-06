@@ -409,8 +409,8 @@ def show_my_reports(username):
             "photo": st.column_config.ImageColumn("Photo", help="Photo of the affected part"),
         }
 
-        # FIX: Changed use_column_width to use_container_width
-        st.dataframe(df_display, column_config=photo_col_config, use_container_width=True)
+        # FIX: Changed use_container_width to width='stretch'
+        st.dataframe(df_display, column_config=photo_col_config, width='stretch')
     else:
         st.info("You haven't submitted any reports yet.")
 
@@ -425,7 +425,7 @@ def show_manager_dashboard():
 
         with tab_data:
             # Use st.data_editor to enable editing and save changes
-            # FIX: Changed use_column_width to use_container_width
+            # FIX: Changed use_container_width to width='stretch'
             edited_df = st.data_editor(
                 df_metrics,
                 column_config={
@@ -438,7 +438,7 @@ def show_manager_dashboard():
                     "Efficiency (%)": st.column_config.NumberColumn("Efficiency (%)", disabled=True, format="%.2f"),
                 },
                 hide_index=True,
-                use_container_width=True
+                width='stretch'
             )
 
             # Detect changes and update the database
@@ -484,7 +484,7 @@ def main():
     # Move EEP logo and developer name to the sidebar
     with st.sidebar:
         # FIX: Using the raw GitHub URL for the EEP logo
-        st.image("https://raw.githubusercontent.com/Gebremedhin1/tekeze-maintenance-tracker/main/EEP_logo.png", use_container_width=True)
+        st.image("https://raw.githubusercontent.com/Gebremedhin1/tekeze-maintenance-tracker/main/EEP_logo.png", width='stretch')
         st.markdown(
             """
             <div style="display: flex; align-items: center; justify-content: flex-start; margin-top: 10px;">
@@ -499,7 +499,7 @@ def main():
     col_dam, col_title = st.columns([1, 3])
     with col_dam:
         # FIX: Using the raw GitHub URL for the dam image
-        st.image("https://raw.githubusercontent.com/Gebremedhin1/tekeze-maintenance-tracker/main/dam.jpg", use_container_width=True)
+        st.image("https://raw.githubusercontent.com/Gebremedhin1/tekeze-maintenance-tracker/main/dam.jpg", width='stretch')
     with col_title:
         st.title("Tekeze Hydropower Plant")
         st.subheader("Maintenance Tracker")
@@ -521,6 +521,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
