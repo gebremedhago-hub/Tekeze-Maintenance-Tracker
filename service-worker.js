@@ -1,17 +1,51 @@
-// A basic service worker for PWA functionality.
-// This handles the installation and activation steps.
+const CACHE_NAME = 'tekeze-maintenance-v1';
+const urlsToCache = [
+'/',
+'manifest.json',
+'/android-chrome-192x192.png',
+'/android-chrome-512x512.png'
+];
+
 self.addEventListener('install', (event) => {
-console.log('Service Worker installed');
-self.skipWaiting();
+console.log('Service Worker: Installing...');
+event.waitUntil(
+caches.open(CACHE_NAME)
+.then((cache) => {
+console.log('Service Worker: Caching assets');
+return cache.addAll(urlsToCache);
+})
+.catch((error) => {
+console.error('Service Worker: Failed to cache assets:', error);
+})
+);
+});
+
+self.addEventListener('fetch', (event) => {
+event.respondWith(
+caches.match(event.request)
+.then((response) => {
+// Return the cached asset if it exists
+if (response) {
+return response;
+}
+// Otherwise, fetch from the network
+return fetch(event.request);
+})
+);
 });
 
 self.addEventListener('activate', (event) => {
-console.log('Service Worker activated');
-event.waitUntil(clients.claim());
-});
-
-// An event listener for fetch requests.
-// We are not adding any caching logic, so we will not interfere with network requests.
-self.addEventListener('fetch', (event) => {
-// If we wanted to add caching, we would put the logic here.
+console.log('Service Worker: Activating...');
+event.waitUntil(
+caches.keys().then((cacheNames) => {
+return Promise.all(
+cacheNames.map((cacheName) => {
+if (cacheName !== CACHE_NAME) {
+console.log('Service Worker: Deleting old cache', cacheName);
+return caches.delete(cacheName);
+}
+})
+);
+})
+);
 });

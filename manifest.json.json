@@ -1,19 +1,19 @@
 {
 "name": "Tekeze Maintenance Tracker",
-"short_name": "Tekeze Tracker",
-"description": "A maintenance tracking app for the Tekeze Hydropower Plant.",
+"short_name": "Tekeze",
 "start_url": ".",
 "display": "standalone",
-"background_color": "#ffffff",
-"theme_color": "#1C71B7",
+"background_color": "#F3F4F6",
+"theme_color": "#4B5563",
+"description": "A web application for tracking maintenance reports at the Tekeze Hydropower Plant.",
 "icons": [
 {
-"src": "https://www.google.com/search?q=https://placehold.co/192x192/A1C4FD/ffffff%3Ftext%3DIcon",
+"src": "/android-chrome-192x192.png",
 "sizes": "192x192",
 "type": "image/png"
 },
 {
-"src": "https://www.google.com/search?q=https://placehold.co/512x512/A1C4FD/ffffff%3Ftext%3DIcon",
+"src": "/android-chrome-512x512.png",
 "sizes": "512x512",
 "type": "image/png"
 }
