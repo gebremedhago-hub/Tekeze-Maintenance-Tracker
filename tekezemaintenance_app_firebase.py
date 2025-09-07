@@ -520,7 +520,7 @@ def show_report_form():
             if uploaded_file is not None:
                 file_bytes = uploaded_file.getvalue()
                 if len(file_bytes) > 20*1024 * 1024:
-                    st.error("❌ The attached file is too large. Please upload a file smaller than 1 MB.")
+                    st.error("❌ The attached file is too large. Please upload a file smaller than 20 MB.")
                 else:
                     encoded_string = base64.b64encode(file_bytes).decode('utf-8')
                     report_data['attached_file'] = {
@@ -767,6 +767,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
