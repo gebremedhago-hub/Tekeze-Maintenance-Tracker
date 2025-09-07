@@ -358,13 +358,15 @@ def show_login_signup():
     col1 = st.columns([1])[0]
     
     with col1:
-        st.markdown("<h3 class='title-font'>Welcome</h3>", unsafe_allow_html=True)
-        st.markdown("<p class='body-font'>The Tekeze Hydropower Plant Maintenance Tracker app allows technicians to log field activities and equipment conditions in real time, enables engineers to verify technical details and diagnose issues, provides managers with clear oversight for decision-making and resource allocation, and supports planners & report writers in compiling accurate records for performance evaluation and future planning.</p>", unsafe_allow_html=True)
-        st.markdown("<h3 class='title-font'>Mission</h3>", unsafe_allow_html=True)
-        st.markdown("<p class='body-font'>To provide reliable and sustainable electric power through innovation technology, continuous learning, fairness and commitment.</p>", unsafe_allow_html=True)
-        st.markdown("<h3 class='title-font'>Vision</h3>", unsafe_allow_html=True)
-        st.markdown("<p class='body-font'>To be the power hub of africa</p>", unsafe_allow_html=True)
-
+        st.markdown("<h3 class='title-font'>Introduction</h3>", unsafe_allow_html=True)
+        st.markdown("<p class='body-font'>The Tekeze Hydropower Plant Maintenance Tracker is a digital platform designed to modernize maintenance reporting and coordination. It enables real-time tracking of mechanical, electrical, and civil activities, reduces paperwork, and enhances accountability. If proven reliable and fully functional at Tekeze, the system can be scaled across Ethiopian Electric Power (EEP) to standardize maintenance processes, strengthen performance monitoring, and improve decision-making for all power generation plants.</p>", unsafe_allow_html=True)
+        st.markdown("<h3 class='title-font'>🌍 Vision</h3>", unsafe_allow_html=True)
+        st.markdown("<p class='body-font'>“To be a model of smart, reliable, and transparent maintenance management that ensures the sustainable performance of Tekeze Hydropower Plant and sets a foundation for system-wide adoption across EEP.”</p>", unsafe_allow_html=True)
+        st.markdown("<h3 class='title-font'>🎯 Mission</h3>", unsafe_allow_html=True)
+        st.markdown("<p class='body-font'>“To simplify, digitalize, and enhance maintenance reporting by fostering accountability, efficiency, and data-driven decision-making across all teams — with the potential to unify and standardize maintenance practices throughout Ethiopian Electric Power.”</p>", unsafe_allow_html=True)
+        st.markdown("<h3 class='title-font'>Strategic Benefits of the Maintenance Tracker</h3>", unsafe_allow_html=True)
+        st.markdown("<p class='body-font'>The Maintenance Tracker provides EEP with improved reliability by minimizing downtime, reducing paperwork, and enhancing staff efficiency. It ensures accountability and transparency across mechanical, electrical, and civil teams while offering real-time data for better decision-making. By lowering maintenance costs, supporting knowledge retention, and creating a scalable system that can be expanded to other power plants, this tool delivers strategic value to EEP in achieving operational excellence.</p>", unsafe_allow_html=True)
+    
     st.sidebar.markdown(
         """
         <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; margin-bottom: 20px;">
