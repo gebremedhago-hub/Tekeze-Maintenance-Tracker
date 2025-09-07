@@ -176,10 +176,30 @@ def get_comments_for_report(report_id):
 
 # --- 📊 Data Analysis Functions ---
 
+def calculate_adjusted_value(planned, actual):
+    """
+    Calculates the adjusted value based on the user's reward/punishment formula.
+    """
+    # Avoid division by zero
+    if planned == 0:
+        return actual
+    
+    difference = actual - planned
+    
+    # Punishment for over-utilization
+    if difference > 0:
+        return planned - difference * (1 + difference / planned)
+    # Reward for under-utilization
+    elif difference < 0:
+        return planned + abs(difference) * (1 + abs(difference) / planned)
+    # Perfect match
+    else:
+        return planned
+
 def calculate_metrics(df):
     """
     Calculates all efficiency and weighted efficiency metrics based on
-    the user's specified formulas. Now includes a punishment for over-utilization.
+    the user's specified formulas.
     """
     df_metrics = df.copy()
 
@@ -204,11 +224,8 @@ def calculate_metrics(df):
         lambda row: (row['actual_activities'] / row['planned_activities']) if row['planned_activities'] > 0 else 0, axis=1)
     df_metrics['activity_efficiency'] = df_metrics['activity_efficiency'].clip(upper=1.0)
     
-    # Calculate a combined Efficiency (%)
-    df_metrics['Efficiency (%)'] = (df_metrics['manpower_efficiency'] + df_metrics['time_efficiency'] + df_metrics['activity_efficiency']) / 3 * 100
-    
-    # Calculate Given and Actual Weight for a summary view
-    df_metrics['total_planned_resource'] = df_metrics['planned_manpower'] + df_metrics['planned_time'] + df_metrics['planned_activities']
+    # Calculate Given Weight based on planned values
+    df_metrics['total_planned_resource'] = df_metrics['planned_activities'] + df_metrics['planned_manpower'] + df_metrics['planned_time']
     total_planned_resource_sum = df_metrics['total_planned_resource'].sum()
 
     if total_planned_resource_sum > 0:
@@ -216,14 +233,30 @@ def calculate_metrics(df):
     else:
         df_metrics["Given Weight"] = 0
     
-    df_metrics['total_actual_resource'] = df_metrics['manpower_used'] + df_metrics['total_time'] + df_metrics['actual_activities']
+    # Calculate Adjusted Actual values based on user's formula
+    df_metrics['adjusted_manpower'] = df_metrics.apply(
+        lambda row: calculate_adjusted_value(row['planned_manpower'], row['manpower_used']), axis=1
+    )
+    df_metrics['adjusted_time'] = df_metrics.apply(
+        lambda row: calculate_adjusted_value(row['planned_time'], row['total_time']), axis=1
+    )
+
+    # Calculate Actual Weight based on adjusted values and actual activities
+    df_metrics['total_actual_resource'] = df_metrics['actual_activities'] + df_metrics['adjusted_manpower'] + df_metrics['adjusted_time']
     total_actual_resource_sum = df_metrics['total_actual_resource'].sum()
+
     if total_actual_resource_sum > 0:
         df_metrics['Actual Weight'] = (df_metrics['total_actual_resource'] / total_actual_resource_sum) * 100
     else:
         df_metrics['Actual Weight'] = 0
 
+    # Calculate Efficiency (%) based on Actual and Given Weight, with 100% cap
+    df_metrics['Efficiency (%)'] = df_metrics.apply(
+        lambda row: (row['Actual Weight'] / row['Given Weight']) * 100 if row['Given Weight'] > 0 else 0, axis=1
+    )
+    df_metrics['Efficiency (%)'] = df_metrics['Efficiency (%)'].clip(upper=100.0)
 
+    
     cols = ['id', 'reporter', 'report_date', 'functional_location', 'specific_location',
             'maintenance_type', 'equipment', 'affected_part',
             'condition_observed', 'diagnosis', 'damage_type', 'action_taken',
@@ -531,25 +564,35 @@ def show_my_reports(username):
         
         # Display the filtered dataframe
         if not filtered_df.empty:
-            # Display a data editor for reporters to view their reports
             st.markdown("---")
             st.subheader("All My Submitted Reports")
             
-            # Use st.data_editor with a more complete set of columns for a read-only view
-            st.data_editor(
-                filtered_df[['reporter', 'report_date', 'functional_location', 'specific_location', 'equipment', 'action_taken', 'status']],
-                disabled=True,
-                hide_index=True,
-                use_container_width=True
-            )
-            
+            # Use st.expander to show all submitted details for each report
+            for index, row in filtered_df.iterrows():
+                with st.expander(f"Report for: {row['equipment']} on {row['report_date']} by {row['reporter']}", expanded=False):
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        st.write(f"**Report ID:** {row['id']}")
+                        st.write(f"**Functional Location:** {row['functional_location']}")
+                        st.write(f"**Specific Location:** {row['specific_location']}")
+                        st.write(f"**Maintenance Type:** {row['maintenance_type']}")
+                        st.write(f"**Equipment:** {row['equipment']}")
+                        st.write(f"**Affected Part:** {row['affected_part']}")
+                        st.write(f"**Condition Observed:** {row['condition_observed']}")
+                    with col2:
+                        st.write(f"**Diagnosis:** {row['diagnosis']}")
+                        st.write(f"**Damage Type:** {row['damage_type']}")
+                        st.write(f"**Action Taken:** {row['action_taken']}")
+                        st.write(f"**Status:** {row['status']}")
+                        st.write(f"**Safety Condition:** {row['safety_condition']}")
+                        st.write(f"**Planned Activities:** {row['planned_activities']}")
+                        st.write(f"**Actual Activities Done:** {row['actual_activities']}")
+                        st.write(f"**Manpower Used:** {row['manpower_used']}")
+                        st.write(f"**Total Time Used (hours):** {row['total_time']}")
+
+            st.markdown("---")
             # CSV download link for reporters
             st.markdown(create_csv_download_link(filtered_df), unsafe_allow_html=True)
-            st.markdown("---")
-
-            for index, row in filtered_df.iterrows():
-                with st.expander(f"Report for: {row['equipment']} on {row['report_date']}"):
-                    show_detailed_report(row['id'], filtered_df)
         else:
             st.info("No reports found matching your search criteria.")
     else:
@@ -732,6 +775,62 @@ def main():
 
 if __name__ == "__main__":
     main()
+            
+
+        else:
+            st.info("No reports found matching your search and filter criteria.")
+
+    else:
+        st.info("No reports have been submitted yet.")
+
+# --- 🚀 Main Application Logic ---
+
+def main():
+    """Main function to run the Streamlit application."""
+    # --- PWA Configuration (Added to the beginning of main) ---
+    st.markdown("""
+        <link rel="manifest" href="/manifest.json">
+        <script>
+          if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.register('/service-worker.js').then(function(reg) {
+              console.log('Service Worker registered!');
+            }).catch(function(err) {
+              console.log('Service Worker registration failed: ', err);
+            });
+          }
+        </script>
+    """, unsafe_allow_html=True)
+    # --- App UI ---
+    st.set_page_config(
+        page_title="Tekeze Maintenance Tracker",
+        page_icon="🛠️",
+        layout="wide"
+    )
+
+    try:
+        st.image("dam.jpg", use_container_width=True)
+    except FileNotFoundError:
+        st.warning("dam.jpg not found. Using a placeholder image.")
+        st.image("https://placehold.co/600x200/A1C4FD/ffffff?text=Dam+Image", use_container_width=True)
+        
+    st.title("Tekeze Hydropower Plant")
+    st.subheader("Maintenance Tracker")
+
+    st.markdown("---")
+    
+    if not st.session_state.firebase_initialized:
+        with st.spinner("Connecting to the database..."):
+            if not initialize_firebase():
+                return
+    
+    if not st.session_state.logged_in:
+        show_login_signup()
+    else:
+        show_main_app()
+
+if __name__ == "__main__":
+    main()
+
 
 
 
