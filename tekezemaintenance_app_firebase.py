@@ -179,22 +179,24 @@ def get_comments_for_report(report_id):
 def calculate_adjusted_value(planned, actual):
     """
     Calculates the adjusted value based on the user's reward/punishment formula.
+    - Punishes over-utilization
+    - Rewards under-utilization
     """
-    # Avoid division by zero
-    if planned == 0:
-        return actual
+    # Use a small number to prevent division by zero
+    epsilon = 1e-9
+    
+    # Perfect match
+    if abs(planned - actual) < epsilon:
+        return planned
     
     difference = actual - planned
     
     # Punishment for over-utilization
     if difference > 0:
-        return planned - difference * (1 + difference / planned)
+        return planned - difference * (1 + difference / (planned + epsilon))
     # Reward for under-utilization
-    elif difference < 0:
-        return planned + abs(difference) * (1 + abs(difference) / planned)
-    # Perfect match
     else:
-        return planned
+        return planned + abs(difference) * (1 + abs(difference) / (planned + epsilon))
 
 def calculate_metrics(df):
     """
@@ -224,7 +226,7 @@ def calculate_metrics(df):
         lambda row: (row['actual_activities'] / row['planned_activities']) if row['planned_activities'] > 0 else 0, axis=1)
     df_metrics['activity_efficiency'] = df_metrics['activity_efficiency'].clip(upper=1.0)
     
-    # Calculate Given Weight based on planned values
+    # Calculate Given Weight based on planned values. The sum of Given Weights will be 100%.
     df_metrics['total_planned_resource'] = df_metrics['planned_activities'] + df_metrics['planned_manpower'] + df_metrics['planned_time']
     total_planned_resource_sum = df_metrics['total_planned_resource'].sum()
 
@@ -233,7 +235,7 @@ def calculate_metrics(df):
     else:
         df_metrics["Given Weight"] = 0
     
-    # Calculate Adjusted Actual values based on user's formula
+    # Calculate Adjusted Actual values based on user's formula.
     df_metrics['adjusted_manpower'] = df_metrics.apply(
         lambda row: calculate_adjusted_value(row['planned_manpower'], row['manpower_used']), axis=1
     )
@@ -241,19 +243,14 @@ def calculate_metrics(df):
         lambda row: calculate_adjusted_value(row['planned_time'], row['total_time']), axis=1
     )
 
-    # Calculate Actual Weight based on adjusted values and actual activities
-    df_metrics['total_actual_resource'] = df_metrics['actual_activities'] + df_metrics['adjusted_manpower'] + df_metrics['adjusted_time']
-    total_actual_resource_sum = df_metrics['total_actual_resource'].sum()
-
-    if total_actual_resource_sum > 0:
-        df_metrics['Actual Weight'] = (df_metrics['total_actual_resource'] / total_actual_resource_sum) * 100
-    else:
-        df_metrics['Actual Weight'] = 0
-
-    # Calculate Efficiency (%) based on Actual and Given Weight, with 100% cap
+    # Calculate Actual Weight as the absolute sum of achievements. The sum of Actual Weights will NOT necessarily be 100.
+    df_metrics['Actual Weight'] = df_metrics['actual_activities'] + df_metrics['adjusted_manpower'] + df_metrics['adjusted_time']
+    
+    # Calculate Efficiency (%) based on Actual and Given Weight, with 100% cap for perfect plan
     df_metrics['Efficiency (%)'] = df_metrics.apply(
         lambda row: (row['Actual Weight'] / row['Given Weight']) * 100 if row['Given Weight'] > 0 else 0, axis=1
     )
+    # Cap efficiency at 100% since a perfect plan is the highest possible achievement.
     df_metrics['Efficiency (%)'] = df_metrics['Efficiency (%)'].clip(upper=100.0)
 
     
@@ -775,6 +772,8 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
 
 
 
