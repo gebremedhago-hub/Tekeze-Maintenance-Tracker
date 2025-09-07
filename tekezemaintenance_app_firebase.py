@@ -489,7 +489,7 @@ def show_report_form():
         actual_activities = st.number_input("Actual Activities Done", min_value=0, step=1)
         
         st.header("Attachments")
-        uploaded_file = st.file_uploader("Attach Photo/Document", type=["jpg", "jpeg", "png", "pdf"], help="Supports JPG, PNG, and PDF. Max 20 MB file size per file.")
+        uploaded_file = st.file_uploader("Attach Photo/Document", type=["jpg", "jpeg", "png", "pdf"], help="Supports JPG, PNG, and PDF. Max 1 MB file size per file.")
         
         submitted = st.form_submit_button("Submit Report")
 
