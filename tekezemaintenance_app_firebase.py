@@ -241,13 +241,11 @@ def calculate_metrics(df):
         axis=1
     )
     
-    # Calculate Efficiency (%) based on Actual and Given Weight, with 100% cap for perfect plan
+    # Calculate Efficiency (%) based on Actual and Given Weight.
+    # The upper limit is no longer capped at 100%.
     df_metrics['Efficiency (%)'] = df_metrics.apply(
         lambda row: (row['Actual Weight'] / row['Given Weight']) * 100 if row['Given Weight'] > 0 else 0, axis=1
     )
-    # Cap efficiency at 100% since a perfect plan is the highest possible achievement.
-    df_metrics['Efficiency (%)'] = df_metrics['Efficiency (%)'].clip(upper=100.0)
-
     
     cols = ['id', 'reporter', 'report_date', 'functional_location', 'specific_location',
             'maintenance_type', 'equipment', 'affected_part',
@@ -767,6 +765,8 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
 
 
 
