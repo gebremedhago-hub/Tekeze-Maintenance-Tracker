@@ -190,8 +190,24 @@ def calculate_metrics(df):
     df_metrics['manpower_used'] = df_metrics['manpower_used'].fillna(0)
     df_metrics['total_time'] = df_metrics['total_time'].fillna(0)
     df_metrics['actual_activities'] = df_metrics['actual_activities'].fillna(0)
-
-    # Calculate Given Weight based on planned values
+    
+    # Calculate a simple efficiency score (capped at 100%)
+    df_metrics['manpower_efficiency'] = df_metrics.apply(
+        lambda row: (row['planned_manpower'] / row['manpower_used']) if row['manpower_used'] > 0 else 0, axis=1)
+    df_metrics['manpower_efficiency'] = df_metrics['manpower_efficiency'].clip(upper=1.0)
+    
+    df_metrics['time_efficiency'] = df_metrics.apply(
+        lambda row: (row['planned_time'] / row['total_time']) if row['total_time'] > 0 else 0, axis=1)
+    df_metrics['time_efficiency'] = df_metrics['time_efficiency'].clip(upper=1.0)
+    
+    df_metrics['activity_efficiency'] = df_metrics.apply(
+        lambda row: (row['actual_activities'] / row['planned_activities']) if row['planned_activities'] > 0 else 0, axis=1)
+    df_metrics['activity_efficiency'] = df_metrics['activity_efficiency'].clip(upper=1.0)
+    
+    # Calculate a combined Efficiency (%)
+    df_metrics['Efficiency (%)'] = (df_metrics['manpower_efficiency'] + df_metrics['time_efficiency'] + df_metrics['activity_efficiency']) / 3 * 100
+    
+    # Calculate Given and Actual Weight for a summary view
     df_metrics['total_planned_resource'] = df_metrics['planned_manpower'] + df_metrics['planned_time'] + df_metrics['planned_activities']
     total_planned_resource_sum = df_metrics['total_planned_resource'].sum()
 
@@ -200,35 +216,14 @@ def calculate_metrics(df):
     else:
         df_metrics["Given Weight"] = 0
     
-    # Calculate Actual Weight based on actual values
     df_metrics['total_actual_resource'] = df_metrics['manpower_used'] + df_metrics['total_time'] + df_metrics['actual_activities']
     total_actual_resource_sum = df_metrics['total_actual_resource'].sum()
-
     if total_actual_resource_sum > 0:
         df_metrics['Actual Weight'] = (df_metrics['total_actual_resource'] / total_actual_resource_sum) * 100
     else:
         df_metrics['Actual Weight'] = 0
 
-    # Calculate base Efficiency
-    df_metrics["Efficiency (%)"] = df_metrics.apply(
-        lambda row: (row["Actual Weight"] / row["Given Weight"]) * 100
-        if row["Given Weight"] > 0 else 0,
-        axis=1
-    )
-    
-    # Apply punishment for over-utilization of resources
-    # Check for over-utilization
-    manpower_over = df_metrics['manpower_used'] > df_metrics['planned_manpower']
-    time_over = df_metrics['total_time'] > df_metrics['planned_time']
-    
-    # Calculate punishment factor for each row
-    punishment_factor = (manpower_over * (df_metrics['manpower_used'] - df_metrics['planned_manpower']) / df_metrics['planned_manpower'].replace(0, 1)) + \
-                        (time_over * (df_metrics['total_time'] - df_metrics['planned_time']) / df_metrics['planned_time'].replace(0, 1))
-    
-    # Apply punishment to efficiency, ensuring it doesn't go negative or below 0
-    df_metrics["Efficiency (%)"] = df_metrics["Efficiency (%)"] * (1 - punishment_factor)
-    df_metrics["Efficiency (%)"] = df_metrics["Efficiency (%)"].clip(lower=0)
-    
+
     cols = ['id', 'reporter', 'report_date', 'functional_location', 'specific_location',
             'maintenance_type', 'equipment', 'affected_part',
             'condition_observed', 'diagnosis', 'damage_type', 'action_taken',
@@ -613,25 +608,13 @@ def show_manager_dashboard():
             # Make a copy to avoid modifying the original DataFrame
             edited_df = filtered_df.copy()
 
-            # Add "View Details" and "Delete" buttons as columns in the data editor
-            edited_df['View Details'] = edited_df['id'].apply(lambda x: f"View_{x}")
-            edited_df['Delete Report'] = edited_df['id'].apply(lambda x: f"Delete_{x}")
-
-            # Define which columns are editable
-            column_config = {
-                "planned_manpower": st.column_config.NumberColumn("Planned Manpower", required=True),
-                "planned_time": st.column_config.NumberColumn("Planned Time (hrs)", required=True),
-                "View Details": st.column_config.ButtonColumn("View", help="Click to view details"),
-                "Delete Report": st.column_config.ButtonColumn("Delete", help="Click to delete this report")
-            }
-            
-            # Display the data editor with a unique key
+            # Display the data editor without buttons as a separate feature
+            st.markdown("Edit the **Planned Manpower** and **Planned Time** for any report below:")
             edited_data = st.data_editor(
                 edited_df[['id', 'reporter', 'report_date', 'functional_location', 'equipment',
                            'planned_manpower', 'planned_time', 'manpower_used', 'total_time', 
                            'actual_activities', 'action_taken',
-                           'Given Weight', 'Actual Weight', 'Efficiency (%)', 'View Details', 'Delete Report']],
-                column_config=column_config,
+                           'Given Weight', 'Actual Weight', 'Efficiency (%)']],
                 disabled=('id', 'reporter', 'report_date', 'functional_location', 'equipment',
                           'manpower_used', 'total_time', 'actual_activities', 'action_taken',
                           'Given Weight', 'Actual Weight', 'Efficiency (%)'),
@@ -640,25 +623,33 @@ def show_manager_dashboard():
                 key="manager_data_editor"
             )
 
-            # Process the edited data and button clicks
-            if edited_data is not None:
-                # Check for edited rows and update Firestore
+            # Process the edited data and update Firestore
+            if not edited_data[['planned_manpower', 'planned_time']].equals(edited_df[['planned_manpower', 'planned_time']]):
                 for index, row in edited_data.iterrows():
                     original_row = edited_df.loc[edited_df['id'] == row['id']].iloc[0]
                     if row['planned_manpower'] != original_row['planned_manpower'] or row['planned_time'] != original_row['planned_time']:
                         update_report(row['id'], row['planned_manpower'], row['planned_time'])
                         st.success(f"Updated planned values for report {row['id']}")
-                        st.rerun()
+                st.rerun()
 
-                # Handle button clicks
-                for index, row in edited_data.iterrows():
-                    if row['View Details']:
-                        st.session_state.selected_report_id = row['id']
+            st.markdown("---")
+            st.subheader("Report Actions")
+            
+            # Create a selection box to choose a report to view or delete
+            report_options = {row['id']: f"{row['report_date']} - {row['equipment']} ({row['id']})" for _, row in filtered_df.iterrows()}
+            selected_id = st.selectbox("Select a report to view or delete", options=list(report_options.keys()), format_func=lambda x: report_options[x], key="report_selector")
+            
+            col_view, col_delete = st.columns(2)
+            with col_view:
+                if st.button("View Details of Selected Report"):
+                    st.session_state.selected_report_id = selected_id
+                    st.rerun()
+            with col_delete:
+                if st.button("Delete Selected Report"):
+                    if delete_report(selected_id):
+                        st.success(f"Report {selected_id} and its comments have been deleted.")
+                        st.session_state.selected_report_id = None
                         st.rerun()
-                    if row['Delete Report']:
-                        if delete_report(row['id']):
-                            st.success(f"Report {row['id']} and its comments have been deleted.")
-                            st.rerun()
 
             # --- CSV Export with Metrics at the end ---
             st.markdown("---")
