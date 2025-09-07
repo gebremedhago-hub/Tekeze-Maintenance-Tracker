@@ -177,7 +177,10 @@ def get_comments_for_report(report_id):
 # --- 📊 Data Analysis Functions ---
 
 def calculate_effective_manpower(row):
-    """Calculates effective manpower based on planned vs. actual."""
+    """
+    Calculates effective manpower based on planned vs. actual,
+    using the provided rewarding/punishing formula.
+    """
     manpower_used = row["manpower_used"] if pd.notna(row["manpower_used"]) else 0
     planned_manpower = row["planned_manpower"] if pd.notna(row["planned_manpower"]) else 0
 
@@ -187,15 +190,18 @@ def calculate_effective_manpower(row):
     manpower_diff = manpower_used - planned_manpower
     factor = abs(manpower_diff) / planned_manpower
     
-    if manpower_diff > 0:
+    if manpower_diff > 0: # Over-utilization (punish)
         return manpower_used - manpower_diff * (1 + factor)
-    elif manpower_diff < 0:
+    elif manpower_diff < 0: # Under-utilization (reward)
         return manpower_used + abs(manpower_diff) * (1 + factor)
     else:
         return manpower_used
 
 def calculate_effective_time(row):
-    """Calculates effective time based on planned vs. actual."""
+    """
+    Calculates effective time based on planned vs. actual,
+    using the provided rewarding/punishing formula.
+    """
     total_time = row["total_time"] if pd.notna(row["total_time"]) else 0
     planned_time = row["planned_time"] if pd.notna(row["planned_time"]) else 0
 
@@ -205,42 +211,42 @@ def calculate_effective_time(row):
     time_diff = total_time - planned_time
     factor = abs(time_diff) / planned_time
     
-    if time_diff > 0:
+    if time_diff > 0: # Overuse of time (punish)
         return total_time - time_diff * (1 + factor)
-    elif time_diff < 0:
+    elif time_diff < 0: # Under-utilization of time (reward)
         return total_time + abs(time_diff) * (1 + factor)
     else:
         return total_time
 
 def calculate_metrics(df):
-    """Calculates all efficiency and weighted efficiency metrics."""
+    """
+    Calculates all efficiency and weighted efficiency metrics based on
+    the user's specified formulas.
+    """
     df_metrics = df.copy()
     
+    # Calculate Given Weight based on planned values
     df_metrics['total_planned_resource'] = df_metrics['planned_manpower'].fillna(0) + df_metrics['planned_time'].fillna(0) + df_metrics['planned_activities'].fillna(0)
+    total_planned_resource_sum = df_metrics['total_planned_resource'].sum()
 
-    last_month_start = (datetime.datetime.now() - datetime.timedelta(days=30)).strftime('%Y-%m-%d')
-    df_metrics['report_date'] = df_metrics['report_date'].apply(lambda x: x.isoformat() if isinstance(x, datetime.date) else x)
-    df_last_month = df_metrics[df_metrics['report_date'] >= last_month_start].copy()
+    if total_planned_resource_sum > 0:
+        df_metrics["Given Weight"] = (df_metrics['total_planned_resource'] / total_planned_resource_sum) * 100
+    else:
+        df_metrics["Given Weight"] = 0
     
-    total_resource_sum = df_last_month['total_planned_resource'].sum()
-
+    # Calculate Effective values using the provided formulas
     df_metrics["effective_manpower"] = df_metrics.apply(calculate_effective_manpower, axis=1)
     df_metrics["effective_time"] = df_metrics.apply(calculate_effective_time, axis=1)
     df_metrics['actual_activities'] = df_metrics['actual_activities'].fillna(0)
 
-    # Calculate Given Weight based on total planned resources
-    if total_resource_sum > 0:
-        df_metrics["Given Weight"] = (df_metrics['total_planned_resource'] / total_resource_sum) * 100
-    else:
-        df_metrics["Given Weight"] = 0
-    
-    # Calculate Actual Weight based on effective resources
+    # Calculate Actual Weight based on effective values
     actual_resource_sum = (df_metrics['effective_manpower'] + df_metrics['effective_time'] + df_metrics['actual_activities']).sum()
     if actual_resource_sum > 0:
         df_metrics['Actual Weight'] = (df_metrics['effective_manpower'] + df_metrics['effective_time'] + df_metrics['actual_activities']) / actual_resource_sum * 100
     else:
         df_metrics['Actual Weight'] = 0
 
+    # Calculate Efficiency
     df_metrics["Efficiency (%)"] = df_metrics.apply(
         lambda row: (row["Actual Weight"] / row["Given Weight"]) * 100
         if row["Given Weight"] > 0 else 0,
@@ -248,11 +254,11 @@ def calculate_metrics(df):
     )
     
     cols = ['id', 'reporter', 'report_date', 'functional_location', 'specific_location',
-             'maintenance_type', 'equipment', 'affected_part',
-             'condition_observed', 'diagnosis', 'damage_type', 'action_taken',
-             'status', 'safety_condition',
-             'planned_activities', 'actual_activities', 'manpower_used', 'total_time',
-             'planned_manpower', 'planned_time', 'Given Weight', 'Actual Weight', 'Efficiency (%)']
+            'maintenance_type', 'equipment', 'affected_part',
+            'condition_observed', 'diagnosis', 'damage_type', 'action_taken',
+            'status', 'safety_condition',
+            'planned_activities', 'actual_activities', 'manpower_used', 'total_time',
+            'planned_manpower', 'planned_time', 'Given Weight', 'Actual Weight', 'Efficiency (%)']
     
     return df_metrics[cols]
 
@@ -297,7 +303,7 @@ def show_detailed_report(report_id, df):
     st.write(f"**Actual Activities Done:** {report.get('actual_activities', 'N/A')}")
     st.write(f"**Manpower Used:** {report.get('manpower_used', 'N/A')}")
     st.write(f"**Total Time Used (hours):** {report.get('total_time', 'N/A')}")
-
+    
     # Display and allow download of attached file
     if 'attached_file' in report and report['attached_file']:
         file_info = report['attached_file']
@@ -556,12 +562,11 @@ def show_my_reports(username):
         if not filtered_df.empty:
             # Display a data editor for reporters to view their reports
             st.markdown("---")
-            st.subheader("All Reports (View-Only)")
+            st.subheader("All My Submitted Reports")
             
-            # Use st.data_editor with disabled columns for a read-only view
+            # Use st.data_editor with a more complete set of columns for a read-only view
             st.data_editor(
-                filtered_df[['id', 'reporter', 'report_date', 'functional_location', 'equipment', 'status', 'action_taken']],
-                column_order=['reporter', 'report_date', 'functional_location', 'equipment', 'status', 'action_taken'],
+                filtered_df[['reporter', 'report_date', 'functional_location', 'specific_location', 'equipment', 'action_taken', 'status']],
                 disabled=True,
                 hide_index=True,
                 use_container_width=True
@@ -632,56 +637,60 @@ def show_manager_dashboard():
             # Make a copy to avoid modifying the original DataFrame
             edited_df = filtered_df.copy()
 
-            # The original code has an error here. Streamlit doesn't have a direct `st.column_config.ButtonColumn`.
-            # We'll use the button functionality with a key based on the index to handle clicks.
-            st.info("To view or delete a report, use the buttons below the data table.")
-            
-            # Define which columns are editable
-            column_config = {
-                "planned_manpower": st.column_config.NumberColumn("Planned Manpower", required=True),
-                "planned_time": st.column_config.NumberColumn("Planned Time (hrs)", required=True),
-            }
+            # Add "View Details" and "Delete" buttons as columns in the data editor
+            try:
+                edited_df['View Details'] = edited_df['id'].apply(lambda x: f"View_{x}")
+                edited_df['Delete Report'] = edited_df['id'].apply(lambda x: f"Delete_{x}")
 
-            # Display the data editor
-            editable_cols = ['id', 'reporter', 'report_date', 'functional_location', 'equipment',
-                             'planned_manpower', 'planned_time', 'Given Weight', 'Actual Weight',
-                             'Efficiency (%)']
-            
-            edited_data = st.data_editor(
-                edited_df[editable_cols],
-                column_config=column_config,
-                hide_index=True,
-                use_container_width=True
-            )
+                # Define which columns are editable
+                column_config = {
+                    "planned_manpower": st.column_config.NumberColumn("Planned Manpower", required=True),
+                    "planned_time": st.column_config.NumberColumn("Planned Time (hrs)", required=True),
+                    "View Details": st.column_config.ButtonColumn("View", help="Click to view details"),
+                    "Delete Report": st.column_config.ButtonColumn("Delete", help="Click to delete this report")
+                }
+                
+                # Display the data editor with a unique key
+                edited_data = st.data_editor(
+                    edited_df[['id', 'reporter', 'report_date', 'functional_location', 'equipment',
+                               'planned_manpower', 'planned_time', 'Given Weight', 'Actual Weight',
+                               'Efficiency (%)', 'View Details', 'Delete Report']],
+                    column_config=column_config,
+                    hide_index=True,
+                    use_container_width=True,
+                    key="manager_data_editor"
+                )
 
-            # Process the edited data
-            if not edited_data.equals(edited_df[editable_cols]):
-                st.write("Processing updates...")
-                for index, row in edited_data.iterrows():
-                    original_row = edited_df.loc[edited_df['id'] == row['id']].iloc[0]
-                    if row['planned_manpower'] != original_row['planned_manpower'] or row['planned_time'] != original_row['planned_time']:
-                        update_report(row['id'], row['planned_manpower'], row['planned_time'])
-                        st.success(f"Updated planned values for report {row['id']}")
-                st.rerun()
-
-            # Handle button clicks separately
-            st.markdown("---")
-            st.subheader("Report Actions")
-            col_buttons = st.columns(2)
-            
-            # Create an action for each row to view/delete
-            for index, row in filtered_df.iterrows():
-                with col_buttons[index % 2]: # Distribute buttons across two columns
-                    if st.button(f"View Details: {row['equipment']}", key=f"view_{row['id']}"):
-                        st.session_state.selected_report_id = row['id']
+                # Process the edited data and button clicks
+                if edited_data is not None:
+                    # Check for edited rows and update Firestore
+                    if not edited_data.equals(edited_df):
+                        for index, row in edited_data.iterrows():
+                            original_row = edited_df.loc[edited_df['id'] == row['id']].iloc[0]
+                            if row['planned_manpower'] != original_row['planned_manpower'] or row['planned_time'] != original_row['planned_time']:
+                                update_report(row['id'], row['planned_manpower'], row['planned_time'])
+                                st.success(f"Updated planned values for report {row['id']}")
                         st.rerun()
-                    if st.button(f"Delete Report: {row['equipment']}", key=f"delete_{row['id']}"):
-                        if delete_report(row['id']):
-                            st.success(f"Report {row['id']} and its comments have been deleted.")
+
+                    # Handle button clicks
+                    for index, row in edited_data.iterrows():
+                        if row['View Details']:
+                            st.session_state.selected_report_id = row['id']
                             st.rerun()
+                        if row['Delete Report']:
+                            if delete_report(row['id']):
+                                st.success(f"Report {row['id']} and its comments have been deleted.")
+                                st.rerun()
+
+            except AttributeError:
+                st.warning("Your Streamlit version does not support interactive buttons. Please update `requirements.txt` to `streamlit>=1.29.0` and redeploy on Streamlit Cloud to enable this feature.")
+                
+                # Fallback to a non-interactive dataframe
+                st.dataframe(filtered_df[['id', 'reporter', 'report_date', 'functional_location', 'equipment',
+                                           'planned_manpower', 'planned_time', 'Given Weight', 'Actual Weight',
+                                           'Efficiency (%)']])
             
             # CSV Download Link
-            st.markdown("---")
             st.markdown(create_csv_download_link(filtered_df), unsafe_allow_html=True)
 
         else:
@@ -702,23 +711,38 @@ def main():
             navigator.serviceWorker.register('/service-worker.js').then(function(reg) {
               console.log('Service Worker registered!');
             }).catch(function(err) {
-              console.error('Service Worker registration failed:', err);
+              console.log('Service Worker registration failed: ', err);
             });
           }
         </script>
     """, unsafe_allow_html=True)
-
+    # --- App UI ---
     st.set_page_config(
         page_title="Tekeze Maintenance Tracker",
         page_icon="🛠️",
         layout="wide"
     )
 
-    if initialize_firebase():
-        if not st.session_state.logged_in:
-            show_login_signup()
-        else:
-            show_main_app()
+    try:
+        st.image("dam.jpg", use_container_width=True)
+    except FileNotFoundError:
+        st.warning("dam.jpg not found. Using a placeholder image.")
+        st.image("https://placehold.co/600x200/A1C4FD/ffffff?text=Dam+Image", use_container_width=True)
+        
+    st.title("Tekeze Hydropower Plant")
+    st.subheader("Maintenance Tracker")
+
+    st.markdown("---")
+    
+    if not st.session_state.firebase_initialized:
+        with st.spinner("Connecting to the database..."):
+            if not initialize_firebase():
+                return
+    
+    if not st.session_state.logged_in:
+        show_login_signup()
+    else:
+        show_main_app()
 
 if __name__ == "__main__":
     main()
