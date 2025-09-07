@@ -8,6 +8,7 @@ import datetime
 import math
 import base64
 import io
+from fpdf import FPDF
 
 # --- ⚙️ Streamlit Session State ---
 # These variables persist across user interactions in the app.
@@ -263,10 +264,72 @@ def create_csv_download_link(df, filename="reports.csv"):
     href = f'<a href="data:file/csv;base64,{b64}" download="{filename}">Download all reports as CSV</a>'
     return href
 
+# --- 📄 PDF Generation Function ---
+def generate_pdf_report(report_data):
+    """
+    Generates a PDF report from a single report's data.
+    """
+    pdf = FPDF()
+    pdf.add_page()
+    pdf.set_font("Helvetica", "B", 16)
+    pdf.cell(200, 10, "Tekeze Hydropower Plant Maintenance Report", ln=True, align='C')
+    pdf.set_font("Helvetica", "", 12)
+    pdf.cell(200, 10, f"Report ID: {report_data.get('id', 'N/A')}", ln=True, align='C')
+    
+    # Add a line break for spacing
+    pdf.ln(10)
+    
+    # --- General Information ---
+    pdf.set_font("Helvetica", "B", 12)
+    pdf.cell(0, 10, "General Information", ln=True)
+    pdf.set_font("Helvetica", "", 10)
+    pdf.cell(0, 7, f"Reporter: {report_data.get('reporter', 'N/A')}", ln=True)
+    pdf.cell(0, 7, f"Report Date: {report_data.get('report_date', 'N/A')}", ln=True)
+    pdf.cell(0, 7, f"Functional Location: {report_data.get('functional_location', 'N/A')}", ln=True)
+    pdf.cell(0, 7, f"Specific Location: {report_data.get('specific_location', 'N/A')}", ln=True)
+    pdf.cell(0, 7, f"Maintenance Type: {report_data.get('maintenance_type', 'N/A')}", ln=True)
+    
+    # --- Problem & Action ---
+    pdf.ln(5)
+    pdf.set_font("Helvetica", "B", 12)
+    pdf.cell(0, 10, "Problem & Action", ln=True)
+    pdf.set_font("Helvetica", "", 10)
+    pdf.multi_cell(0, 5, f"Equipment: {report_data.get('equipment', 'N/A')}")
+    pdf.multi_cell(0, 5, f"Affected Part: {report_data.get('affected_part', 'N/A')}")
+    pdf.multi_cell(0, 5, f"Condition Observed: {report_data.get('condition_observed', 'N/A')}")
+    pdf.multi_cell(0, 5, f"Diagnosis: {report_data.get('diagnosis', 'N/A')}")
+    pdf.multi_cell(0, 5, f"Damage Type: {report_data.get('damage_type', 'N/A')}")
+    pdf.multi_cell(0, 5, f"Action Taken: {report_data.get('action_taken', 'N/A')}")
+
+    # --- Status and Metrics ---
+    pdf.ln(5)
+    pdf.set_font("Helvetica", "B", 12)
+    pdf.cell(0, 10, "Status and Metrics", ln=True)
+    pdf.set_font("Helvetica", "", 10)
+    pdf.cell(0, 7, f"Status: {report_data.get('status', 'N/A')}", ln=True)
+    pdf.cell(0, 7, f"Safety Condition: {report_data.get('safety_condition', 'N/A')}", ln=True)
+    pdf.cell(0, 7, f"Planned Activities: {report_data.get('planned_activities', 'N/A')}", ln=True)
+    pdf.cell(0, 7, f"Actual Activities Done: {report_data.get('actual_activities', 'N/A')}", ln=True)
+    pdf.cell(0, 7, f"Manpower Used: {report_data.get('manpower_used', 'N/A')}", ln=True)
+    pdf.cell(0, 7, f"Total Time Used (hours): {report_data.get('total_time', 'N/A')}", ln=True)
+
+    # --- Save PDF to an in-memory buffer ---
+    pdf_output = pdf.output(dest='S').encode('latin-1')
+    return io.BytesIO(pdf_output)
+
 def show_detailed_report(report_id, df):
-    """Displays a detailed view of a single report with comments."""
+    """Displays a detailed view of a single report with comments and a PDF download button."""
     report = df[df['id'] == report_id].iloc[0]
     st.header(f"Report Details: {report['id']}")
+    
+    # --- Add PDF download button ---
+    pdf_bytes = generate_pdf_report(report)
+    st.download_button(
+        label="Download as PDF",
+        data=pdf_bytes,
+        file_name=f"Report_{report['equipment']}_{report['report_date']}.pdf",
+        mime="application/pdf"
+    )
     
     if st.button("⬅️ Back to Reports"):
         st.session_state.selected_report_id = None
@@ -767,6 +830,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
