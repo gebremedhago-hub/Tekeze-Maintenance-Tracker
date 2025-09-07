@@ -1,4 +1,6 @@
 streamlit
-bcrypt
-firebase-admin
 pandas
+firebase-admin
+bcrypt
+fpdf2
+
