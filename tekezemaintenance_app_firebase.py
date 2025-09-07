@@ -775,61 +775,7 @@ def main():
 
 if __name__ == "__main__":
     main()
-            
 
-        else:
-            st.info("No reports found matching your search and filter criteria.")
-
-    else:
-        st.info("No reports have been submitted yet.")
-
-# --- 🚀 Main Application Logic ---
-
-def main():
-    """Main function to run the Streamlit application."""
-    # --- PWA Configuration (Added to the beginning of main) ---
-    st.markdown("""
-        <link rel="manifest" href="/manifest.json">
-        <script>
-          if ('serviceWorker' in navigator) {
-            navigator.serviceWorker.register('/service-worker.js').then(function(reg) {
-              console.log('Service Worker registered!');
-            }).catch(function(err) {
-              console.log('Service Worker registration failed: ', err);
-            });
-          }
-        </script>
-    """, unsafe_allow_html=True)
-    # --- App UI ---
-    st.set_page_config(
-        page_title="Tekeze Maintenance Tracker",
-        page_icon="🛠️",
-        layout="wide"
-    )
-
-    try:
-        st.image("dam.jpg", use_container_width=True)
-    except FileNotFoundError:
-        st.warning("dam.jpg not found. Using a placeholder image.")
-        st.image("https://placehold.co/600x200/A1C4FD/ffffff?text=Dam+Image", use_container_width=True)
-        
-    st.title("Tekeze Hydropower Plant")
-    st.subheader("Maintenance Tracker")
-
-    st.markdown("---")
-    
-    if not st.session_state.firebase_initialized:
-        with st.spinner("Connecting to the database..."):
-            if not initialize_firebase():
-                return
-    
-    if not st.session_state.logged_in:
-        show_login_signup()
-    else:
-        show_main_app()
-
-if __name__ == "__main__":
-    main()
 
 
 
