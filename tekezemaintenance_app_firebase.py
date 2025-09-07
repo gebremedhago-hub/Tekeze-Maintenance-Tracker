@@ -1,14 +1,14 @@
 import streamlit as st
 import firebase_admin
-from firebase_admin import credentials, firestore, auth
+from firebase_admin import credentials, firestore
 import bcrypt
+from fpdf import FPDF
 import pandas as pd
 import json
 import datetime
 import math
 import base64
 import io
-from fpdf import FPDF
 
 # --- ⚙️ Streamlit Session State ---
 # These variables persist across user interactions in the app.
@@ -51,7 +51,7 @@ def initialize_firebase():
         st.error(f"Error initializing Firebase: {e}")
         return False
 
-# --- User Authentication & Management Functions ---
+# --- User Authentication Functions ---
 
 def login_user(username, password):
     """
@@ -69,7 +69,7 @@ def login_user(username, password):
             return True
     return False
 
-def register_user(username, password, first_name, last_name, user_type, email):
+def register_user(username, password, first_name, last_name, user_type):
     """Registers a new user in the Firestore database."""
     hashed_password = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
     user_data = {
@@ -77,28 +77,12 @@ def register_user(username, password, first_name, last_name, user_type, email):
         'password': hashed_password,
         'first_name': first_name,
         'last_name': last_name,
-        'user_type': user_type,
-        'email': email
+        'user_type': user_type
     }
     user_ref = st.session_state.db.collection('users').document(username)
     user_ref.set(user_data)
     st.success("Registration successful! Please log in.")
     return True
-
-def change_password(username, old_password, new_password):
-    """Changes the password for a logged-in user."""
-    user_ref = st.session_state.db.collection('users').document(username)
-    user_doc = user_ref.get()
-
-    if user_doc.exists:
-        user_data = user_doc.to_dict()
-        hashed_password = user_data.get('password')
-        
-        if hashed_password and bcrypt.checkpw(old_password.encode('utf-8'), hashed_password.encode('utf-8')):
-            new_hashed_password = bcrypt.hashpw(new_password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
-            user_ref.update({'password': new_hashed_password})
-            return True
-    return False
 
 # --- Data Handling Functions for Firestore ---
 
@@ -122,20 +106,6 @@ def update_report(report_id, planned_manpower, planned_time):
         return True
     except Exception as e:
         st.error(f"Failed to update report: {e}")
-        return False
-
-def delete_report(report_id):
-    """Deletes a report from the Firestore database."""
-    try:
-        # Delete the report document
-        st.session_state.db.collection('maintenance_reports').document(report_id).delete()
-        # Also delete any associated comments
-        comments_ref = st.session_state.db.collection('comments').where('report_id', '==', report_id)
-        for comment_doc in comments_ref.stream():
-            comment_doc.reference.delete()
-        return True
-    except Exception as e:
-        st.error(f"Failed to delete report: {e}")
         return False
 
 def get_reports(username=None):
@@ -177,75 +147,72 @@ def get_comments_for_report(report_id):
 
 # --- 📊 Data Analysis Functions ---
 
-def calculate_adjusted_value(planned, actual):
-    """
-    Calculates the adjusted value based on the user's reward/punishment formula.
-    - Punishes over-utilization
-    - Rewards under-utilization
-    """
-    # Use a small number to prevent division by zero
-    epsilon = 1e-9
+def calculate_effective_manpower(row):
+    """Calculates effective manpower based on planned vs. actual."""
+    manpower_used = row["manpower_used"] if pd.notna(row["manpower_used"]) else 0
+    planned_manpower = row["planned_manpower"] if pd.notna(row["planned_manpower"]) else 0
+
+    if planned_manpower == 0:
+        return 0
     
-    # Perfect match
-    if abs(planned - actual) < epsilon:
-        return actual
+    manpower_diff = manpower_used - planned_manpower
+    factor = abs(manpower_diff) / planned_manpower
     
-    difference = actual - planned
-    
-    # Punishment for over-utilization
-    if difference > 0:
-        return actual - difference * (1 + difference / (planned + epsilon))
-    # Reward for under-utilization
+    if manpower_diff > 0:
+        return manpower_used - manpower_diff * (1 + factor)
+    elif manpower_diff < 0:
+        return manpower_used + abs(manpower_diff) * (1 + factor)
     else:
-        return actual + abs(difference) * (1 + abs(difference) / (planned + epsilon))
+        return manpower_used
+
+def calculate_effective_time(row):
+    """Calculates effective time based on planned vs. actual."""
+    total_time = row["total_time"] if pd.notna(row["total_time"]) else 0
+    planned_time = row["planned_time"] if pd.notna(row["planned_time"]) else 0
+
+    if planned_time == 0:
+        return 0
+    
+    time_diff = total_time - planned_time
+    factor = abs(time_diff) / planned_time
+    
+    if time_diff > 0:
+        return total_time - time_diff * (1 + factor)
+    elif time_diff < 0:
+        return total_time + abs(time_diff) * (1 + factor)
+    else:
+        return total_time
 
 def calculate_metrics(df):
-    """
-    Calculates all efficiency and weighted efficiency metrics based on
-    the user's specified formulas.
-    """
+    """Calculates all efficiency and weighted efficiency metrics."""
     df_metrics = df.copy()
-
-    # Fill NaN values to prevent errors in calculations
-    df_metrics['planned_manpower'] = df_metrics['planned_manpower'].fillna(0)
-    df_metrics['planned_time'] = df_metrics['planned_time'].fillna(0)
-    df_metrics['planned_activities'] = df_metrics['planned_activities'].fillna(0)
-    df_metrics['manpower_used'] = df_metrics['manpower_used'].fillna(0)
-    df_metrics['total_time'] = df_metrics['total_time'].fillna(0)
-    df_metrics['actual_activities'] = df_metrics['actual_activities'].fillna(0)
     
-    # Calculate Given Weight based on planned values. The sum of Given Weights will be 100%.
-    df_metrics['total_planned_resource'] = df_metrics['planned_activities'] + df_metrics['planned_manpower'] + df_metrics['planned_time']
-    total_planned_resource_sum = df_metrics['total_planned_resource'].sum()
+    df_metrics['total_planned_resource'] = df_metrics['planned_manpower'].fillna(0) + df_metrics['planned_time'].fillna(0) + df_metrics['planned_activities'].fillna(0)
 
-    if total_planned_resource_sum > 0:
-        df_metrics["Given Weight"] = (df_metrics['total_planned_resource'] / total_planned_resource_sum) * 100
+    last_month_start = (datetime.datetime.now() - datetime.timedelta(days=30)).strftime('%Y-%m-%d')
+    df_metrics['report_date'] = df_metrics['report_date'].apply(lambda x: x.isoformat() if isinstance(x, datetime.date) else x)
+    df_last_month = df_metrics[df_metrics['report_date'] >= last_month_start].copy()
+    
+    total_resource_sum = df_last_month['total_planned_resource'].sum()
+
+    df_metrics["effective_manpower"] = df_metrics.apply(calculate_effective_manpower, axis=1)
+    df_metrics["effective_time"] = df_metrics.apply(calculate_effective_time, axis=1)
+    df_metrics['actual_activities'] = df_metrics['actual_activities'].fillna(0)
+
+    if total_resource_sum > 0:
+        df_metrics["Given Weight"] = (df_metrics['total_planned_resource'] / total_resource_sum) * 100
+        
+        df_metrics['actual_resource_sum'] = df_metrics['effective_manpower'] + df_metrics['effective_time'] + df_metrics['actual_activities']
+        df_metrics["Actual Weight"] = (df_metrics['actual_resource_sum'] / total_resource_sum) * 100
+        
     else:
         df_metrics["Given Weight"] = 0
-    
-    # Calculate Adjusted Actual values based on user's formula.
-    df_metrics['adjusted_manpower'] = df_metrics.apply(
-        lambda row: calculate_adjusted_value(row['planned_manpower'], row['manpower_used']), axis=1
-    )
-    df_metrics['adjusted_time'] = df_metrics.apply(
-        lambda row: calculate_adjusted_value(row['planned_time'], row['total_time']), axis=1
-    )
-    df_metrics['adjusted_activities'] = df_metrics['actual_activities']
-    
-    # Calculate Actual Resource Sum for each task
-    df_metrics['total_actual_resource'] = df_metrics['adjusted_activities'] + df_metrics['adjusted_manpower'] + df_metrics['adjusted_time']
-    
-    # Calculate Actual Weight as a proportion of the Given Weight
-    # based on the ratio of actual to planned resources for that task
-    df_metrics['Actual Weight'] = df_metrics.apply(
-        lambda row: (row['total_actual_resource'] / row['total_planned_resource']) * row['Given Weight'] if row['total_planned_resource'] > 0 else 0,
+        df_metrics["Actual Weight"] = 0
+
+    df_metrics["Efficiency (%)"] = df_metrics.apply(
+        lambda row: (row["Actual Weight"] / row["Given Weight"]) * 100
+        if row["Given Weight"] > 0 else 0,
         axis=1
-    )
-    
-    # Calculate Efficiency (%) based on Actual and Given Weight.
-    # The upper limit is no longer capped at 100%.
-    df_metrics['Efficiency (%)'] = df_metrics.apply(
-        lambda row: (row['Actual Weight'] / row['Given Weight']) * 100 if row['Given Weight'] > 0 else 0, axis=1
     )
     
     cols = ['id', 'reporter', 'report_date', 'functional_location', 'specific_location',
@@ -264,72 +231,56 @@ def create_csv_download_link(df, filename="reports.csv"):
     href = f'<a href="data:file/csv;base64,{b64}" download="{filename}">Download all reports as CSV</a>'
     return href
 
-# --- 📄 PDF Generation Function ---
-def generate_pdf_report(report_data):
-    """
-    Generates a PDF report from a single report's data.
-    """
+def create_pdf_report(report):
+    """Generates a PDF report from a report dictionary."""
     pdf = FPDF()
     pdf.add_page()
     pdf.set_font("Helvetica", "B", 16)
-    pdf.cell(200, 10, "Tekeze Hydropower Plant Maintenance Report", ln=True, align='C')
+    
+    pdf.cell(200, 10, txt=f"Maintenance Report for {report.get('equipment', 'N/A')}", ln=True, align="C")
     pdf.set_font("Helvetica", "", 12)
-    pdf.cell(200, 10, f"Report ID: {report_data.get('id', 'N/A')}", ln=True, align='C')
-    
-    # Add a line break for spacing
     pdf.ln(10)
-    
-    # --- General Information ---
-    pdf.set_font("Helvetica", "B", 12)
-    pdf.cell(0, 10, "General Information", ln=True)
-    pdf.set_font("Helvetica", "", 10)
-    pdf.cell(0, 7, f"Reporter: {report_data.get('reporter', 'N/A')}", ln=True)
-    pdf.cell(0, 7, f"Report Date: {report_data.get('report_date', 'N/A')}", ln=True)
-    pdf.cell(0, 7, f"Functional Location: {report_data.get('functional_location', 'N/A')}", ln=True)
-    pdf.cell(0, 7, f"Specific Location: {report_data.get('specific_location', 'N/A')}", ln=True)
-    pdf.cell(0, 7, f"Maintenance Type: {report_data.get('maintenance_type', 'N/A')}", ln=True)
-    
-    # --- Problem & Action ---
-    pdf.ln(5)
-    pdf.set_font("Helvetica", "B", 12)
-    pdf.cell(0, 10, "Problem & Action", ln=True)
-    pdf.set_font("Helvetica", "", 10)
-    pdf.multi_cell(0, 5, f"Equipment: {report_data.get('equipment', 'N/A')}")
-    pdf.multi_cell(0, 5, f"Affected Part: {report_data.get('affected_part', 'N/A')}")
-    pdf.multi_cell(0, 5, f"Condition Observed: {report_data.get('condition_observed', 'N/A')}")
-    pdf.multi_cell(0, 5, f"Diagnosis: {report_data.get('diagnosis', 'N/A')}")
-    pdf.multi_cell(0, 5, f"Damage Type: {report_data.get('damage_type', 'N/A')}")
-    pdf.multi_cell(0, 5, f"Action Taken: {report_data.get('action_taken', 'N/A')}")
 
-    # --- Status and Metrics ---
-    pdf.ln(5)
-    pdf.set_font("Helvetica", "B", 12)
-    pdf.cell(0, 10, "Status and Metrics", ln=True)
-    pdf.set_font("Helvetica", "", 10)
-    pdf.cell(0, 7, f"Status: {report_data.get('status', 'N/A')}", ln=True)
-    pdf.cell(0, 7, f"Safety Condition: {report_data.get('safety_condition', 'N/A')}", ln=True)
-    pdf.cell(0, 7, f"Planned Activities: {report_data.get('planned_activities', 'N/A')}", ln=True)
-    pdf.cell(0, 7, f"Actual Activities Done: {report_data.get('actual_activities', 'N/A')}", ln=True)
-    pdf.cell(0, 7, f"Manpower Used: {report_data.get('manpower_used', 'N/A')}", ln=True)
-    pdf.cell(0, 7, f"Total Time Used (hours): {report_data.get('total_time', 'N/A')}", ln=True)
+    # Helper function to add key-value pairs
+    def add_field(key, value):
+        pdf.set_font("Helvetica", "B", 12)
+        pdf.multi_cell(0, 7, txt=f"{key}:", ln=True)
+        pdf.set_font("Helvetica", "", 12)
+        pdf.multi_cell(0, 7, txt=str(value), ln=True)
+        pdf.ln(2)
 
-    # --- Save PDF to an in-memory buffer ---
-    pdf_output = pdf.output(dest='S').encode('latin-1')
-    return io.BytesIO(pdf_output)
+    fields_to_add = [
+        ("Report ID", report.get('id', 'N/A')),
+        ("Report Date", report.get('report_date', 'N/A')),
+        ("Reporter", report.get('reporter', 'N/A')),
+        ("Functional Location", report.get('functional_location', 'N/A')),
+        ("Specific Location", report.get('specific_location', 'N/A')),
+        ("Maintenance Type", report.get('maintenance_type', 'N/A')),
+        ("Equipment", report.get('equipment', 'N/A')),
+        ("Affected Part", report.get('affected_part', 'N/A')),
+        ("Condition Observed", report.get('condition_observed', 'N/A')),
+        ("Diagnosis", report.get('diagnosis', 'N/A')),
+        ("Damage Type", report.get('damage_type', 'N/A')),
+        ("Action Taken", report.get('action_taken', 'N/A')),
+        ("Status", report.get('status', 'N/A')),
+        ("Safety Condition", report.get('safety_condition', 'N/A')),
+        ("Planned Activities", report.get('planned_activities', 'N/A')),
+        ("Actual Activities Done", report.get('actual_activities', 'N/A')),
+        ("Manpower Used", report.get('manpower_used', 'N/A')),
+        ("Total Time Used (hours)", report.get('total_time', 'N/A'))
+    ]
+
+    for key, value in fields_to_add:
+        add_field(key, value)
+    
+    # Save the PDF to a bytes buffer
+    pdf_bytes = pdf.output(dest='S').encode('latin1')
+    return pdf_bytes
 
 def show_detailed_report(report_id, df):
-    """Displays a detailed view of a single report with comments and a PDF download button."""
+    """Displays a detailed view of a single report with comments."""
     report = df[df['id'] == report_id].iloc[0]
     st.header(f"Report Details: {report['id']}")
-    
-    # --- Add PDF download button ---
-    pdf_bytes = generate_pdf_report(report)
-    st.download_button(
-        label="Download as PDF",
-        data=pdf_bytes,
-        file_name=f"Report_{report['equipment']}_{report['report_date']}.pdf",
-        mime="application/pdf"
-    )
     
     if st.button("⬅️ Back to Reports"):
         st.session_state.selected_report_id = None
@@ -360,7 +311,7 @@ def show_detailed_report(report_id, df):
     st.write(f"**Actual Activities Done:** {report.get('actual_activities', 'N/A')}")
     st.write(f"**Manpower Used:** {report.get('manpower_used', 'N/A')}")
     st.write(f"**Total Time Used (hours):** {report.get('total_time', 'N/A')}")
-    
+
     # Display and allow download of attached file
     if 'attached_file' in report and report['attached_file']:
         file_info = report['attached_file']
@@ -380,6 +331,15 @@ def show_detailed_report(report_id, df):
             )
         except (base64.binascii.Error, TypeError) as e:
             st.warning(f"Could not display attached file. Data may be corrupted. {e}")
+
+    # Add PDF Download Button
+    pdf_bytes = create_pdf_report(report)
+    st.download_button(
+        label="Download as PDF",
+        data=pdf_bytes,
+        file_name=f"report_{report['id']}.pdf",
+        mime="application/pdf"
+    )
 
     # --- Comments Section ---
     st.subheader("Comments")
@@ -421,15 +381,13 @@ def show_login_signup():
     col1 = st.columns([1])[0]
     
     with col1:
-        st.markdown("<h3 class='title-font'>Introduction</h3>", unsafe_allow_html=True)
-        st.markdown("<p class='body-font'>The Tekeze Hydropower Plant Maintenance Tracker is a digital platform designed to modernize maintenance reporting and coordination. It enables real-time tracking of mechanical, electrical, and civil activities, reduces paperwork, and enhances accountability. If proven reliable and fully functional at Tekeze, the system can be scaled across Ethiopian Electric Power (EEP) to standardize maintenance processes, strengthen performance monitoring, and improve decision-making for all power generation plants.</p>", unsafe_allow_html=True)
-        st.markdown("<h3 class='title-font'>🌍 Vision</h3>", unsafe_allow_html=True)
-        st.markdown("<p class='body-font'>“To be a model of smart, reliable, and transparent maintenance management that ensures the sustainable performance of Tekeze Hydropower Plant and sets a foundation for system-wide adoption across EEP.”</p>", unsafe_allow_html=True)
-        st.markdown("<h3 class='title-font'>🎯 Mission</h3>", unsafe_allow_html=True)
-        st.markdown("<p class='body-font'>“To simplify, digitalize, and enhance maintenance reporting by fostering accountability, efficiency, and data-driven decision-making across all teams — with the potential to unify and standardize maintenance practices throughout Ethiopian Electric Power.”</p>", unsafe_allow_html=True)
-        st.markdown("<h3 class='title-font'>Strategic Benefits of the Maintenance Tracker</h3>", unsafe_allow_html=True)
-        st.markdown("<p class='body-font'>The Maintenance Tracker provides EEP with improved reliability by minimizing downtime, reducing paperwork, and enhancing staff efficiency. It ensures accountability and transparency across mechanical, electrical, and civil teams while offering real-time data for better decision-making. By lowering maintenance costs, supporting knowledge retention, and creating a scalable system that can be expanded to other power plants, this tool delivers strategic value to EEP in achieving operational excellence.</p>", unsafe_allow_html=True)
-    
+        st.markdown("<h3 class='title-font'>Welcome</h3>", unsafe_allow_html=True)
+        st.markdown("<p class='body-font'>The Tekeze Hydropower Plant Maintenance Tracker app allows technicians to log field activities and equipment conditions in real time, enables engineers to verify technical details and diagnose issues, provides managers with clear oversight for decision-making and resource allocation, and supports planners & report writers in compiling accurate records for performance evaluation and future planning.</p>", unsafe_allow_html=True)
+        st.markdown("<h3 class='title-font'>Mission</h3>", unsafe_allow_html=True)
+        st.markdown("<p class='body-font'>To provide reliable and sustainable electric power through innovation technology, continuous learning, fairness and commitment.</p>", unsafe_allow_html=True)
+        st.markdown("<h3 class='title-font'>Vision</h3>", unsafe_allow_html=True)
+        st.markdown("<p class='body-font'>To be the power hub of africa</p>", unsafe_allow_html=True)
+
     st.sidebar.markdown(
         """
         <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; margin-bottom: 20px;">
@@ -448,23 +406,22 @@ def show_login_signup():
 
     if choice == "Sign Up":
         st.sidebar.subheader("Create New Account")
-        new_user = st.sidebar.text_input("Username", key="reg_user")
-        new_pass = st.sidebar.text_input("Password", type="password", key="reg_pass")
-        new_first_name = st.sidebar.text_input("First Name", key="reg_first")
-        new_last_name = st.sidebar.text_input("Last Name", key="reg_last")
-        new_email = st.sidebar.text_input("Email", key="reg_email")
+        new_user = st.sidebar.text_input("Username")
+        new_pass = st.sidebar.text_input("Password", type="password")
+        new_first_name = st.sidebar.text_input("First Name")
+        new_last_name = st.sidebar.text_input("Last Name")
         new_user_type = st.sidebar.selectbox("User Type", ["Maintenance Staff", "Operator", "Manager"])
         if st.sidebar.button("Create Account"):
             try:
-                if register_user(new_user, new_pass, new_first_name, new_last_name, new_user_type, new_email):
+                if register_user(new_user, new_pass, new_first_name, new_last_name, new_user_type):
                     st.rerun()
             except Exception as e:
                 st.error(f"Registration failed: {e}")
 
     elif choice == "Login":
         st.sidebar.subheader("Login to your Account")
-        username = st.sidebar.text_input("Username", key="login_user")
-        password = st.sidebar.text_input("Password", type="password", key="login_pass")
+        username = st.sidebar.text_input("Username")
+        password = st.sidebar.text_input("Password", type="password")
         if st.sidebar.button("Login"):
             try:
                 if login_user(username, password):
@@ -477,12 +434,14 @@ def show_login_signup():
 def show_main_app():
     """Displays the main application interface after a user logs in."""
     st.sidebar.write(f"Logged in as: **{st.session_state.user['first_name']} {st.session_state.user['last_name']}**")
-    
-    app_mode = st.sidebar.radio("Navigation", ["Submit Report", "My Reports", "Manager Dashboard", "Account Settings"])
-    
     if st.sidebar.button("Logout"):
         st.session_state.clear()
         st.rerun()
+
+    if st.session_state.user['user_type'] == "Manager":
+        app_mode = st.sidebar.radio("Navigation", ["Submit Report", "My Reports", "Manager Dashboard"])
+    else:
+        app_mode = st.sidebar.radio("Navigation", ["Submit Report", "My Reports"])
 
     if app_mode == "Submit Report":
         show_report_form()
@@ -493,31 +452,6 @@ def show_main_app():
             show_manager_dashboard()
         else:
             st.error("You do not have permission to view this dashboard.")
-    elif app_mode == "Account Settings":
-        show_account_settings()
-
-def show_account_settings():
-    """Displays the account settings page for a user to change their password."""
-    st.header("🔑 Change Your Password")
-    
-    with st.form("change_password_form"):
-        old_password = st.text_input("Enter your old password", type="password")
-        new_password = st.text_input("Enter your new password", type="password")
-        confirm_password = st.text_input("Confirm your new password", type="password")
-        
-        submitted = st.form_submit_button("Change Password")
-        
-        if submitted:
-            if not old_password or not new_password or not confirm_password:
-                st.error("All fields are required.")
-            elif new_password != confirm_password:
-                st.error("New passwords do not match.")
-            else:
-                if change_password(st.session_state.user['username'], old_password, new_password):
-                    st.success("✅ Password changed successfully!")
-                else:
-                    st.error("❌ Failed to change password. Please check your old password and try again.")
-    st.info("To recover a forgotten password, please contact an administrator.")
 
 def show_report_form():
     """Displays the maintenance report submission form."""
@@ -619,35 +553,9 @@ def show_my_reports(username):
         
         # Display the filtered dataframe
         if not filtered_df.empty:
-            st.markdown("---")
-            st.subheader("All My Submitted Reports")
-            
-            # Use st.expander to show all submitted details for each report
             for index, row in filtered_df.iterrows():
-                with st.expander(f"Report for: {row['equipment']} on {row['report_date']} by {row['reporter']}", expanded=False):
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        st.write(f"**Report ID:** {row['id']}")
-                        st.write(f"**Functional Location:** {row['functional_location']}")
-                        st.write(f"**Specific Location:** {row['specific_location']}")
-                        st.write(f"**Maintenance Type:** {row['maintenance_type']}")
-                        st.write(f"**Equipment:** {row['equipment']}")
-                        st.write(f"**Affected Part:** {row['affected_part']}")
-                        st.write(f"**Condition Observed:** {row['condition_observed']}")
-                    with col2:
-                        st.write(f"**Diagnosis:** {row['diagnosis']}")
-                        st.write(f"**Damage Type:** {row['damage_type']}")
-                        st.write(f"**Action Taken:** {row['action_taken']}")
-                        st.write(f"**Status:** {row['status']}")
-                        st.write(f"**Safety Condition:** {row['safety_condition']}")
-                        st.write(f"**Planned Activities:** {row['planned_activities']}")
-                        st.write(f"**Actual Activities Done:** {row['actual_activities']}")
-                        st.write(f"**Manpower Used:** {row['manpower_used']}")
-                        st.write(f"**Total Time Used (hours):** {row['total_time']}")
-
-            st.markdown("---")
-            # CSV download link for reporters
-            st.markdown(create_csv_download_link(filtered_df), unsafe_allow_html=True)
+                with st.expander(f"Report for: {row['equipment']} on {row['report_date']}"):
+                    show_detailed_report(row['id'], filtered_df)
         else:
             st.info("No reports found matching your search criteria.")
     else:
@@ -703,79 +611,30 @@ def show_manager_dashboard():
             # --- Data Editing and Export ---
             st.header("All Reports (Editable)")
             
-            # Make a copy to avoid modifying the original DataFrame
+            # Add a button to view details for each row
             edited_df = filtered_df.copy()
+            edited_df['View Details'] = edited_df['id'].apply(lambda x: st.button("View", key=f'view_{x}'))
 
-            # Display the data editor without buttons as a separate feature
-            st.markdown("Edit the **Planned Manpower** and **Planned Time** for any report below:")
-            edited_data = st.data_editor(
+            # The view details buttons are now functional
+            for index, row in edited_df.iterrows():
+                if row['View Details']:
+                    st.session_state.selected_report_id = row['id']
+                    st.rerun()
+
+            # Display the data editor
+            st.dataframe(
                 edited_df[['id', 'reporter', 'report_date', 'functional_location', 'equipment',
-                           'planned_manpower', 'planned_time', 'manpower_used', 'total_time', 
-                           'actual_activities', 'action_taken',
-                           'Given Weight', 'Actual Weight', 'Efficiency (%)']],
-                disabled=('id', 'reporter', 'report_date', 'functional_location', 'equipment',
-                          'manpower_used', 'total_time', 'actual_activities', 'action_taken',
-                          'Given Weight', 'Actual Weight', 'Efficiency (%)'),
-                hide_index=True,
-                use_container_width=True,
-                key="manager_data_editor"
+                           'planned_manpower', 'planned_time', 'manpower_used', 'total_time',
+                           'Efficiency (%)', 'View Details']]
             )
 
-            # Process the edited data and update Firestore
-            if not edited_data[['planned_manpower', 'planned_time']].equals(edited_df[['planned_manpower', 'planned_time']]):
-                for index, row in edited_data.iterrows():
-                    original_row = edited_df.loc[edited_df['id'] == row['id']].iloc[0]
-                    if row['planned_manpower'] != original_row['planned_manpower'] or row['planned_time'] != original_row['planned_time']:
-                        update_report(row['id'], row['planned_manpower'], row['planned_time'])
-                        st.success(f"Updated planned values for report {row['id']}")
-                st.rerun()
+            # Detect changes and update the database
+            if not edited_df.equals(filtered_df):
+                 st.write("Changes detected. Not implemented yet to avoid unintended writes to database.")
+                 st.write("Please refresh to clear changes.")
 
-            st.markdown("---")
-            st.subheader("Report Actions")
-            
-            # Create a selection box to choose a report to view or delete
-            report_options = {row['id']: f"{row['report_date']} - {row['equipment']} ({row['id']})" for _, row in filtered_df.iterrows()}
-            selected_id = st.selectbox("Select a report to view or delete", options=list(report_options.keys()), format_func=lambda x: report_options[x], key="report_selector")
-            
-            col_view, col_delete = st.columns(2)
-            with col_view:
-                if st.button("View Details of Selected Report"):
-                    st.session_state.selected_report_id = selected_id
-                    st.rerun()
-            with col_delete:
-                if st.button("Delete Selected Report"):
-                    if delete_report(selected_id):
-                        st.success(f"Report {selected_id} and its comments have been deleted.")
-                        st.session_state.selected_report_id = None
-                        st.rerun()
-
-            # --- CSV Export with Metrics at the end ---
-            st.markdown("---")
-            st.subheader("Download All Reports")
-            
-            # Create the main CSV string
-            main_csv_string = df_metrics.to_csv(index=False)
-            
-            # Create a summary DataFrame
-            metrics_summary = pd.DataFrame([
-                ['Total Reports', len(df_all)],
-                ['Total Planned Manpower', df_all['planned_manpower'].sum()],
-                ['Total Manpower Used', df_all['manpower_used'].sum()],
-                ['Overall Avg. Efficiency (%)', df_metrics["Efficiency (%)"].mean()],
-            ], columns=['Metric', 'Value'])
-            
-            # Convert the summary to a CSV string to append
-            summary_csv_string = "\n\nPerformance Metrics Summary\n" + metrics_summary.to_csv(index=False)
-            
-            # Combine the main CSV and the summary CSV
-            full_csv_string = main_csv_string + summary_csv_string
-            
-            # Create the download link with the combined content
-            b64_full = base64.b64encode(full_csv_string.encode()).decode()
-            href_full = f'<a href="data:file/csv;base64,{b64_full}" download="reports_with_metrics.csv">Download All Reports with Metrics as CSV</a>'
-            st.markdown(href_full, unsafe_allow_html=True)
-            # --- End CSV Export ---
-            
+            # CSV Download Link
+            st.markdown(create_csv_download_link(filtered_df), unsafe_allow_html=True)
 
         else:
             st.info("No reports found matching your search and filter criteria.")
@@ -787,7 +646,8 @@ def show_manager_dashboard():
 
 def main():
     """Main function to run the Streamlit application."""
-    # --- PWA Configuration (Added to the beginning of main) ---
+    
+    # PWA Configuration: Link to manifest and service worker
     st.markdown("""
         <link rel="manifest" href="/manifest.json">
         <script>
@@ -800,12 +660,6 @@ def main():
           }
         </script>
     """, unsafe_allow_html=True)
-    # --- App UI ---
-    st.set_page_config(
-        page_title="Tekeze Maintenance Tracker",
-        page_icon="🛠️",
-        layout="wide"
-    )
 
     try:
         st.image("dam.jpg", use_container_width=True)
