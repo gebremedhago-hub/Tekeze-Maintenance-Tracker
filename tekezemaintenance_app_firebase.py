@@ -248,11 +248,11 @@ def calculate_metrics(df):
     )
     
     cols = ['id', 'reporter', 'report_date', 'functional_location', 'specific_location',
-            'maintenance_type', 'equipment', 'affected_part',
-            'condition_observed', 'diagnosis', 'damage_type', 'action_taken',
-            'status', 'safety_condition',
-            'planned_activities', 'actual_activities', 'manpower_used', 'total_time',
-            'planned_manpower', 'planned_time', 'Given Weight', 'Actual Weight', 'Efficiency (%)']
+             'maintenance_type', 'equipment', 'affected_part',
+             'condition_observed', 'diagnosis', 'damage_type', 'action_taken',
+             'status', 'safety_condition',
+             'planned_activities', 'actual_activities', 'manpower_used', 'total_time',
+             'planned_manpower', 'planned_time', 'Given Weight', 'Actual Weight', 'Efficiency (%)']
     
     return df_metrics[cols]
 
@@ -554,6 +554,23 @@ def show_my_reports(username):
         
         # Display the filtered dataframe
         if not filtered_df.empty:
+            # Display a data editor for reporters to view their reports
+            st.markdown("---")
+            st.subheader("All Reports (View-Only)")
+            
+            # Use st.data_editor with disabled columns for a read-only view
+            st.data_editor(
+                filtered_df[['id', 'reporter', 'report_date', 'functional_location', 'equipment', 'status', 'action_taken']],
+                column_order=['reporter', 'report_date', 'functional_location', 'equipment', 'status', 'action_taken'],
+                disabled=True,
+                hide_index=True,
+                use_container_width=True
+            )
+            
+            # CSV download link for reporters
+            st.markdown(create_csv_download_link(filtered_df), unsafe_allow_html=True)
+            st.markdown("---")
+
             for index, row in filtered_df.iterrows():
                 with st.expander(f"Report for: {row['equipment']} on {row['report_date']}"):
                     show_detailed_report(row['id'], filtered_df)
@@ -615,50 +632,56 @@ def show_manager_dashboard():
             # Make a copy to avoid modifying the original DataFrame
             edited_df = filtered_df.copy()
 
-            # Add "View Details" button and a "Delete" button as columns in the data editor
-            edited_df['View Details'] = edited_df['id'].apply(lambda x: f"View_{x}")
-            edited_df['Delete Report'] = edited_df['id'].apply(lambda x: f"Delete_{x}")
-
+            # The original code has an error here. Streamlit doesn't have a direct `st.column_config.ButtonColumn`.
+            # We'll use the button functionality with a key based on the index to handle clicks.
+            st.info("To view or delete a report, use the buttons below the data table.")
+            
             # Define which columns are editable
             column_config = {
                 "planned_manpower": st.column_config.NumberColumn("Planned Manpower", required=True),
                 "planned_time": st.column_config.NumberColumn("Planned Time (hrs)", required=True),
-                "View Details": st.column_config.ButtonColumn("View", help="Click to view details"),
-                "Delete Report": st.column_config.ButtonColumn("Delete", help="Click to delete this report")
             }
 
             # Display the data editor
+            editable_cols = ['id', 'reporter', 'report_date', 'functional_location', 'equipment',
+                             'planned_manpower', 'planned_time', 'Given Weight', 'Actual Weight',
+                             'Efficiency (%)']
+            
             edited_data = st.data_editor(
-                edited_df[['id', 'reporter', 'report_date', 'functional_location', 'equipment',
-                           'planned_manpower', 'planned_time', 'Given Weight', 'Actual Weight',
-                           'Efficiency (%)', 'View Details', 'Delete Report']],
+                edited_df[editable_cols],
                 column_config=column_config,
                 hide_index=True,
                 use_container_width=True
             )
 
-            # Process the edited data and delete requests
-            if edited_data is not None:
-                # Check for edited rows and update Firestore
-                if not edited_data.equals(edited_df):
-                    for index, row in edited_data.iterrows():
-                        original_row = edited_df.loc[edited_df['id'] == row['id']].iloc[0]
-                        if row['planned_manpower'] != original_row['planned_manpower'] or row['planned_time'] != original_row['planned_time']:
-                            update_report(row['id'], row['planned_manpower'], row['planned_time'])
-                            st.success(f"Updated planned values for report {row['id']}")
-                    st.rerun()
-
-                # Handle button clicks
+            # Process the edited data
+            if not edited_data.equals(edited_df[editable_cols]):
+                st.write("Processing updates...")
                 for index, row in edited_data.iterrows():
-                    if row['View Details']:
+                    original_row = edited_df.loc[edited_df['id'] == row['id']].iloc[0]
+                    if row['planned_manpower'] != original_row['planned_manpower'] or row['planned_time'] != original_row['planned_time']:
+                        update_report(row['id'], row['planned_manpower'], row['planned_time'])
+                        st.success(f"Updated planned values for report {row['id']}")
+                st.rerun()
+
+            # Handle button clicks separately
+            st.markdown("---")
+            st.subheader("Report Actions")
+            col_buttons = st.columns(2)
+            
+            # Create an action for each row to view/delete
+            for index, row in filtered_df.iterrows():
+                with col_buttons[index % 2]: # Distribute buttons across two columns
+                    if st.button(f"View Details: {row['equipment']}", key=f"view_{row['id']}"):
                         st.session_state.selected_report_id = row['id']
                         st.rerun()
-                    if row['Delete Report']:
+                    if st.button(f"Delete Report: {row['equipment']}", key=f"delete_{row['id']}"):
                         if delete_report(row['id']):
                             st.success(f"Report {row['id']} and its comments have been deleted.")
                             st.rerun()
             
             # CSV Download Link
+            st.markdown("---")
             st.markdown(create_csv_download_link(filtered_df), unsafe_allow_html=True)
 
         else:
@@ -679,32 +702,23 @@ def main():
             navigator.serviceWorker.register('/service-worker.js').then(function(reg) {
               console.log('Service Worker registered!');
             }).catch(function(err) {
-              console.log('Service Worker registration failed: ', err);
+              console.error('Service Worker registration failed:', err);
             });
           }
         </script>
     """, unsafe_allow_html=True)
-    # --- App UI ---
-    try:
-        st.image("dam.jpg", use_container_width=True)
-    except FileNotFoundError:
-        st.warning("dam.jpg not found. Using a placeholder image.")
-        st.image("https://placehold.co/600x200/A1C4FD/ffffff?text=Dam+Image", use_container_width=True)
-        
-    st.title("Tekeze Hydropower Plant")
-    st.subheader("Maintenance Tracker")
 
-    st.markdown("---")
-    
-    if not st.session_state.firebase_initialized:
-        with st.spinner("Connecting to the database..."):
-            if not initialize_firebase():
-                return
-    
-    if not st.session_state.logged_in:
-        show_login_signup()
-    else:
-        show_main_app()
+    st.set_page_config(
+        page_title="Tekeze Maintenance Tracker",
+        page_icon="🛠️",
+        layout="wide"
+    )
+
+    if initialize_firebase():
+        if not st.session_state.logged_in:
+            show_login_signup()
+        else:
+            show_main_app()
 
 if __name__ == "__main__":
     main()
