@@ -653,8 +653,9 @@ def show_manager_dashboard():
                 # Display the data editor with a unique key
                 edited_data = st.data_editor(
                     edited_df[['id', 'reporter', 'report_date', 'functional_location', 'equipment',
-                               'planned_manpower', 'planned_time', 'Given Weight', 'Actual Weight',
-                               'Efficiency (%)', 'View Details', 'Delete Report']],
+                               'planned_manpower', 'planned_time', 'manpower_used', 'total_time', 
+                               'actual_activities', 'action_taken',
+                               'Given Weight', 'Actual Weight', 'Efficiency (%)', 'View Details', 'Delete Report']],
                     column_config=column_config,
                     hide_index=True,
                     use_container_width=True,
@@ -664,7 +665,7 @@ def show_manager_dashboard():
                 # Process the edited data and button clicks
                 if edited_data is not None:
                     # Check for edited rows and update Firestore
-                    if not edited_data.equals(edited_df):
+                    if not edited_data[['planned_manpower', 'planned_time']].equals(edited_df[['planned_manpower', 'planned_time']]):
                         for index, row in edited_data.iterrows():
                             original_row = edited_df.loc[edited_df['id'] == row['id']].iloc[0]
                             if row['planned_manpower'] != original_row['planned_manpower'] or row['planned_time'] != original_row['planned_time']:
@@ -690,8 +691,33 @@ def show_manager_dashboard():
                                            'planned_manpower', 'planned_time', 'Given Weight', 'Actual Weight',
                                            'Efficiency (%)']])
             
-            # CSV Download Link
-            st.markdown(create_csv_download_link(filtered_df), unsafe_allow_html=True)
+            # --- CSV Export with Metrics at the end ---
+            st.markdown("---")
+            st.subheader("Download All Reports")
+            
+            # Create the main CSV string
+            main_csv_string = df_metrics.to_csv(index=False)
+            
+            # Create a summary DataFrame
+            metrics_summary = pd.DataFrame([
+                ['Total Reports', len(df_all)],
+                ['Total Planned Manpower', df_all['planned_manpower'].sum()],
+                ['Total Manpower Used', df_all['manpower_used'].sum()],
+                ['Overall Avg. Efficiency (%)', df_metrics["Efficiency (%)"].mean()],
+            ], columns=['Metric', 'Value'])
+            
+            # Convert the summary to a CSV string to append
+            summary_csv_string = "\n\nPerformance Metrics Summary\n" + metrics_summary.to_csv(index=False)
+            
+            # Combine the main CSV and the summary CSV
+            full_csv_string = main_csv_string + summary_csv_string
+            
+            # Create the download link with the combined content
+            b64_full = base64.b64encode(full_csv_string.encode()).decode()
+            href_full = f'<a href="data:file/csv;base64,{b64_full}" download="reports_with_metrics.csv">Download All Reports with Metrics as CSV</a>'
+            st.markdown(href_full, unsafe_allow_html=True)
+            # --- End CSV Export ---
+            
 
         else:
             st.info("No reports found matching your search and filter criteria.")
@@ -746,6 +772,8 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
 
 
 
