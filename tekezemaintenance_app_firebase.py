@@ -499,13 +499,15 @@ def show_detailed_report(report_id, df):
                 st.info(f"File: {file_info['filename']} ({file_info['filetype']})")
             
             st.download_button(
-                label="Download File",
+                label="Download Attached File",
                 data=file_bytes,
                 file_name=file_info['filename'],
-                mime=file_info['filetype']
+                mime=file_info['filetype'],
+                key=f"dl_{report_id}"
             )
         except (base64.binascii.Error, TypeError) as e:
             st.warning(f"Could not display attached file. Data may be corrupted. {e}")
+
 
     # Display comments in real-time
     comments = get_comments_for_report(report_id)
@@ -1026,6 +1028,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
