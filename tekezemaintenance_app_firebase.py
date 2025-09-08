@@ -168,8 +168,9 @@ def _report_to_pdf_bytes(report_dict) -> bytes:
             c.drawString(x_left, y, "Attachment")
             y -= line_gap
             c.setFont("Helvetica", 11)
-            draw_line("File Name", attached.get('filename', ''))
-            draw_line("File Type", attached.get('filetype', ''))
+            # ✅ Fixed line below
+            draw_line("File Name", attached.get('filename', 'N/A') if isinstance(attached, dict) else str(attached))
+            draw_line("File Type", attached.get('filetype', 'N/A') if isinstance(attached, dict) else "")
 
         c.showPage()
         c.save()
@@ -182,15 +183,13 @@ def _report_to_pdf_bytes(report_dict) -> bytes:
     for k, v in report_dict.items():
         if k == 'attached_file':
             af = v or {}
-            text_content.append(f"{k}.filename: {af.get('filename','')}")
-            text_content.append(f"{k}.filetype: {af.get('filetype','')}")
+            text_content.append(f"{k}.filename: {af.get('filename','') if isinstance(af, dict) else str(af)}")
+            text_content.append(f"{k}.filetype: {af.get('filetype','') if isinstance(af, dict) else ''}")
         else:
             text_content.append(f"{k}: {v}")
     content_str = "\n".join(text_content)
     fake_pdf = f"%PDF-1.1\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n2 0 obj<</Type/Pages/Count 1/Kids[3 0 R]>>endobj\n3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 612 792]/Contents 4 0 R/Resources<<>> >>endobj\n4 0 obj<</Length {len(content_str)+35}>>stream\nBT /F1 12 Tf 72 720 Td ({content_str[:1000]}) Tj ET\nendstream\nendobj\nxref\n0 5\n0000000000 65535 f \n0000000010 00000 n \n0000000060 00000 n \n0000000115 00000 n \n0000000270 00000 n \ntrailer<</Size 5/Root 1 0 R>>\nstartxref\n400\n%%EOF"
     return fake_pdf.encode("latin-1", errors="ignore")
-
-# --- User Authentication & Management Functions ---
 
 def login_user(username, password):
     """
@@ -1024,6 +1023,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
