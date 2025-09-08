@@ -495,6 +495,8 @@ def show_detailed_report(report_id, df):
             file_bytes = base64.b64decode(file_info['data_b64'])
             if file_info['filetype'].startswith('image'):
                 st.image(file_bytes, caption=file_info['filename'])
+            if file_info['filetype'].startswith('pdf'):
+                st.pdf(file_bytes, caption=file_info['filename'])
             else:
                 st.info(f"File: {file_info['filename']} ({file_info['filetype']})")
             
@@ -1028,6 +1030,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
