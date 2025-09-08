@@ -168,7 +168,6 @@ def _report_to_pdf_bytes(report_dict) -> bytes:
             y -= line_gap
             c.setFont("Helvetica", 11)
             draw_line("File Name", attached.get('filename', '') if isinstance(attached, dict) else str(attached))
-            draw_line("File Type", attached.get('filetype', ''))
 
         c.showPage()
         c.save()
@@ -1023,6 +1022,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
