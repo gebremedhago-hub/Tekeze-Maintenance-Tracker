@@ -104,7 +104,7 @@ def _report_to_pdf_bytes(report_dict) -> bytes:
         y = height - 20 * mm
         line_gap = 7 * mm
 
-       import textwrap
+import textwrap
 
 def draw_line(lbl, val):
     nonlocal y
@@ -1028,6 +1028,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
