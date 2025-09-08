@@ -3,4 +3,5 @@ pandas
 firebase-admin
 bcrypt
 fpdf2
+reportlab
 
