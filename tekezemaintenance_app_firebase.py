@@ -104,16 +104,14 @@ def _report_to_pdf_bytes(report_dict) -> bytes:
         y = height - 20 * mm
         line_gap = 7 * mm
 
-import textwrap
-
-def draw_line(lbl, val):
-    nonlocal y
-    text = f"{lbl}: {val if val not in [None, ''] else 'N/A'}"
-    wrapped_lines = textwrap.wrap(text, width=90)  # adjust width to fit page
-    for i, line in enumerate(wrapped_lines):
-        c.drawString(x_left, y, line)
-        y -= line_gap
-
+        import textwrap
+        def draw_line(lbl, val):
+            nonlocal y
+            text = f"{lbl}: {val if val not in [None, ''] else 'N/A'}"
+            wrapped_lines = textwrap.wrap(text, width=90)  # wrap instead of cut
+            for line in wrapped_lines:
+                c.drawString(x_left, y, line)
+                y -= line_gap
 
         c.setTitle(f"Report {report_dict.get('id', '')}")
         c.setFont("Helvetica-Bold", 14)
@@ -145,9 +143,7 @@ def draw_line(lbl, val):
         ]
 
         for lbl, val in sections:
-            # Make multiline for long fields
             if isinstance(val, str) and len(val) > 110:
-                # split about every 100 chars
                 first = True
                 while val:
                     part = val[:100]
@@ -173,7 +169,6 @@ def draw_line(lbl, val):
             c.drawString(x_left, y, "Attachment")
             y -= line_gap
             c.setFont("Helvetica", 11)
-            # ✅ Fixed line below
             draw_line("File Name", attached.get('filename', 'N/A') if isinstance(attached, dict) else str(attached))
             draw_line("File Type", attached.get('filetype', 'N/A') if isinstance(attached, dict) else "")
 
@@ -183,7 +178,6 @@ def draw_line(lbl, val):
         return buffer.read()
 
     # Fallback: very simple pseudo-PDF (still a valid PDF header/body, minimal content)
-    # Note: This is intentionally tiny; for best results, add 'reportlab' to your environment.
     text_content = []
     for k, v in report_dict.items():
         if k == 'attached_file':
@@ -195,6 +189,7 @@ def draw_line(lbl, val):
     content_str = "\n".join(text_content)
     fake_pdf = f"%PDF-1.1\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n2 0 obj<</Type/Pages/Count 1/Kids[3 0 R]>>endobj\n3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 612 792]/Contents 4 0 R/Resources<<>> >>endobj\n4 0 obj<</Length {len(content_str)+35}>>stream\nBT /F1 12 Tf 72 720 Td ({content_str[:1000]}) Tj ET\nendstream\nendobj\nxref\n0 5\n0000000000 65535 f \n0000000010 00000 n \n0000000060 00000 n \n0000000115 00000 n \n0000000270 00000 n \ntrailer<</Size 5/Root 1 0 R>>\nstartxref\n400\n%%EOF"
     return fake_pdf.encode("latin-1", errors="ignore")
+
 
 def login_user(username, password):
     """
@@ -1028,6 +1023,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
