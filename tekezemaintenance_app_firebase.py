@@ -488,8 +488,7 @@ def show_detailed_report(report_id, df):
     st.write(f"**Total Time Used (hours):** {report.get('total_time', 'N/A')}")
     
     # Display and allow download of attached file
-attached_file = report.get('attached_file')  
-# safer access
+attached_file = report.get('attached_file')  # safer access
 if attached_file and isinstance(attached_file, dict):
     st.subheader("Attached File")
     try:
@@ -1045,6 +1044,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
