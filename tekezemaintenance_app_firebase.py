@@ -487,44 +487,25 @@ def show_detailed_report(report_id, df):
     st.write(f"**Manpower Used:** {report.get('manpower_used', 'N/A')}")
     st.write(f"**Total Time Used (hours):** {report.get('total_time', 'N/A')}")
     
-   #Display and allow download of attached file
-
-if 'attached_file' in report and report['attached_file']:
-
-file_info = report['attached_file']
-
-st.subheader("Attached File")
-
-try:
-
-file_bytes = base64.b64decode(file_info['data_b64'])
-
-if file_info['filetype'].startswith('image'):
-
-st.image(file_bytes, caption=file_info['filename'])
-
-else:
-
-st.info(f"File: {file_info['filename']} ({file_info['filetype']})")
-
-
-st.download_button(
-
-label="Download Attached File",
-
-data=file_bytes,
-
-file_name=file_info['filename'],
-
-mime=file_info['filetype'],
-
-key=f"dl_{report_id}"
-
-)
-
-except (base64.binascii.Error, TypeError) as e:
-
-st.warning(f"Could not display attached file. Data may be corrupted. {e}")
+   # Display and allow download of attached file
+    if 'attached_file' in report and report['attached_file']:
+        file_info = report['attached_file']
+        st.subheader("Attached File")
+        try:
+            file_bytes = base64.b64decode(file_info['data_b64'])
+            if file_info['filetype'].startswith('image'):
+                st.image(file_bytes, caption=file_info['filename'])
+            else:
+                st.info(f"File: {file_info['filename']} ({file_info['filetype']})")
+            
+            st.download_button(
+                label="Download File",
+                data=file_bytes,
+                file_name=file_info['filename'],
+                mime=file_info['filetype']
+            )
+        except (base64.binascii.Error, TypeError) as e:
+            st.warning(f"Could not display attached file. Data may be corrupted. {e}")
 
     # Display comments in real-time
     comments = get_comments_for_report(report_id)
@@ -1045,6 +1026,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
