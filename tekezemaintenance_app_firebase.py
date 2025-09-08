@@ -167,7 +167,40 @@ def _report_to_pdf_bytes(report_dict) -> bytes:
             c.drawString(x_left, y, "Attachment")
             y -= line_gap
             c.setFont("Helvetica", 11)
-            draw_line("File Name", attached.get('filename', '') if isinstance(attached, dict) else str(attached))
+            def _report_to_pdf_bytes(report):
+    from io import BytesIO
+    from reportlab.lib.pagesizes import letter
+    from reportlab.pdfgen import canvas
+
+    buffer = BytesIO()
+    c = canvas.Canvas(buffer, pagesize=letter)
+    width, height = letter
+    y = height - 50
+
+    def draw_line(label, value):
+        nonlocal y
+        c.drawString(50, y, f"{label}: {value}")
+        y -= 20
+
+    # Example fields (keep what you already had)
+    draw_line("Report ID", report.get('id', 'N/A'))
+    draw_line("Created By", report.get('created_by', 'N/A'))
+
+    # Safely handle attachments
+    attachments = report.get('attachments', [])
+    if not isinstance(attachments, list):
+        attachments = [attachments]
+
+    for attached in attachments:
+        # ✅ fixed line 171
+        draw_line("File Name", attached.get('filename', 'N/A') if isinstance(attached, dict) else str(attached))
+
+    c.showPage()
+    c.save()
+    pdf_bytes = buffer.getvalue()
+    buffer.close()
+    return pdf_bytes
+
 
         c.showPage()
         c.save()
@@ -1022,6 +1055,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
