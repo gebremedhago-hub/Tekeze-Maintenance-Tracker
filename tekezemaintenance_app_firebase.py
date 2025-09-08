@@ -167,7 +167,7 @@ def _report_to_pdf_bytes(report_dict) -> bytes:
             c.drawString(x_left, y, "Attachment")
             y -= line_gap
             c.setFont("Helvetica", 11)
-            def _report_to_pdf_bytes(report):
+def _report_to_pdf_bytes(report):
     from io import BytesIO
     from reportlab.lib.pagesizes import letter
     from reportlab.pdfgen import canvas
@@ -1055,6 +1055,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
