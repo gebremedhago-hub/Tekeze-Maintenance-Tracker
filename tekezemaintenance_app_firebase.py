@@ -162,7 +162,7 @@ def _report_to_pdf_bytes(report_dict) -> bytes:
                 y = height - 20 * mm
                 c.setFont("Helvetica", 11)
 
-                # Attached file info
+        # Attached file info
         attached = report_dict.get('attached_file', {})
         if attached:
             if y < 40 * mm:
@@ -173,15 +173,8 @@ def _report_to_pdf_bytes(report_dict) -> bytes:
             c.drawString(x_left, y, "Attachment")
             y -= line_gap
             c.setFont("Helvetica", 11)
-
-            if isinstance(attached, dict):
-                # normal expected case
-                draw_line("File Name", attached.get('filename', 'N/A'), bullet=True)
-                draw_line("File Type", attached.get('filetype', 'N/A'), bullet=True)
-            else:
-                # fallback if attached_file is not a dict
-                draw_line("File", str(attached), bullet=True)
-
+            draw_line("File Name", attached.get('filename', 'N/A') if isinstance(attached, dict) else str(attached), bullet=True)
+            draw_line("File Type", attached.get('filetype', 'N/A') if isinstance(attached, dict) else "", bullet=True)
 
         c.showPage()
         c.save()
@@ -202,6 +195,7 @@ def _report_to_pdf_bytes(report_dict) -> bytes:
     return fake_pdf.encode("latin-1", errors="ignore")
 
 
+# --- User Authentication & Management Functions ---
 
 def login_user(username, password):
     """
@@ -487,27 +481,7 @@ def show_detailed_report(report_id, df):
     st.write(f"**Manpower Used:** {report.get('manpower_used', 'N/A')}")
     st.write(f"**Total Time Used (hours):** {report.get('total_time', 'N/A')}")
     
-   # Display and allow download of attached file
-    if 'attached_file' in report and report['attached_file']:
-        file_info = report['attached_file']
-        st.subheader("Attached File")
-        try:
-            file_bytes = base64.b64decode(file_info['data_b64'])
-            if file_info['filetype'].startswith('image'):
-                st.image(file_bytes, caption=file_info['filename'])
-            else:
-                st.info(f"File: {file_info['filename']} ({file_info['filetype']})")
-            
-            st.download_button(
-                label="Download Attached File",
-                data=file_bytes,
-                file_name=file_info['filename'],
-                mime=file_info['filetype'],
-                key=f"dl_{report_id}"
-            )
-        except (base64.binascii.Error, TypeError) as e:
-            st.warning(f"Could not display attached file. Data may be corrupted. {e}")
-# Display and allow download of attached file
+    # Display and allow download of attached file
     if 'attached_file' in report and report['attached_file']:
         file_info = report['attached_file']
         st.subheader("Attached File")
@@ -528,7 +502,13 @@ def show_detailed_report(report_id, df):
         except (base64.binascii.Error, TypeError) as e:
             st.warning(f"Could not display attached file. Data may be corrupted. {e}")
 
-
+    # --- Comments Section ---
+    st.subheader("Comments")
+    comment_box = st.text_area("Add a comment:", key=f"comment_box_{report_id}")
+    if st.button("Post Comment", key=f"post_comment_button_{report_id}"):
+        if comment_box:
+            add_comment_to_report(report_id, st.session_state.user['username'], comment_box)
+            st.rerun()
 
     # Display comments in real-time
     comments = get_comments_for_report(report_id)
@@ -1049,53 +1029,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
