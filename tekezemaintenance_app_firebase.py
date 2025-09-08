@@ -488,35 +488,14 @@ def show_detailed_report(report_id, df):
     st.write(f"**Total Time Used (hours):** {report.get('total_time', 'N/A')}")
     
     # Display and allow download of attached file
-attached_file = report.get('attached_file')  # safer access
-if attached_file and isinstance(attached_file, dict):
-    st.subheader("Attached File")
-    try:
-        file_data_b64 = attached_file.get('data_b64')
-        file_name = attached_file.get('filename', 'unknown_file')
-        file_type = attached_file.get('filetype', 'application/octet-stream')
+def display_attached_file(report, report_id):
+    """
+    Displays an attached file and provides a download button.
+    It handles various file types and provides better error handling.
 
-        if file_data_b64:
-            file_bytes = base64.b64decode(file_data_b64)
-
-            # Display image files
-            if file_type.startswith('image'):
-                st.image(file_bytes, caption=file_name)
-            else:
-                st.info(f"File: {file_name} ({file_type})")
-
-            # Allow download for all files
-            st.download_button(
-                label="Download File",
-                data=file_bytes,
-                file_name=file_name,
-                mime=file_type,
-                key=f"dl_{file_name}"
-            )
-        else:
-            st.warning("No data found for this attached file.")
-    except Exception as e:
-        st.warning(f"Could not display attached file. Data may be corrupted. {e}")
+    Args:
+…        # Handle case where 'attached_file' is missing or not a dictionary (e.g., a float)
+        st.info("No attached file found for this report.")
     # --- Comments Section ---
     st.subheader("Comments")
     comment_box = st.text_area("Add a comment:", key=f"comment_box_{report_id}")
@@ -1044,6 +1023,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
