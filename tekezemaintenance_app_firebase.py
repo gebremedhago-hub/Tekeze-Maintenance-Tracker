@@ -1,4 +1,4 @@
-import streamlit as st
+import streamlit as st 
 import firebase_admin
 from firebase_admin import credentials, firestore, auth
 import bcrypt
@@ -8,6 +8,16 @@ import datetime
 import math
 import base64
 import io
+import os  # NEW: for basename on uploaded files
+
+# Try to import reportlab for PDF generation; we’ll gracefully fall back if unavailable
+try:
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.units import mm
+    from reportlab.pdfgen import canvas
+    REPORTLAB_AVAILABLE = True
+except Exception:
+    REPORTLAB_AVAILABLE = False
 
 # --- ⚙️ Streamlit Session State ---
 # These variables persist across user interactions in the app.
@@ -49,6 +59,136 @@ def initialize_firebase():
     except Exception as e:
         st.error(f"Error initializing Firebase: {e}")
         return False
+
+# --- 🔢 Sequential Report ID (NEW) ---
+
+def _initialize_counter_if_needed(transaction, db):
+    counter_ref = db.collection('meta').document('report_counter')
+    snapshot = counter_ref.get(transaction=transaction)
+    if not snapshot.exists:
+        # Initialize based on current count to avoid clashes with existing docs
+        current_count = len(list(db.collection('maintenance_reports').stream()))
+        transaction.set(counter_ref, {'current': int(current_count)})
+
+def _get_next_report_id():
+    """
+    Atomically increments and returns the next 5-digit report ID as a zero-padded string.
+    """
+    db = st.session_state.db
+    transaction = db.transaction()
+
+    @firestore.transactional
+    def txn(tx):
+        counter_ref = db.collection('meta').document('report_counter')
+        _initialize_counter_if_needed(tx, db)
+        snapshot = counter_ref.get(transaction=tx)
+        current = snapshot.get('current') or 0
+        next_val = int(current) + 1
+        tx.update(counter_ref, {'current': next_val})
+        return f"{next_val:05d}"
+
+    return txn(transaction)
+
+# --- 📄 PDF Generation for Single Report (NEW) ---
+
+def _report_to_pdf_bytes(report_dict) -> bytes:
+    """
+    Generates a PDF of the provided report dict. If reportlab is not installed,
+    returns a minimal text-based PDF-like fallback.
+    """
+    if REPORTLAB_AVAILABLE:
+        buffer = io.BytesIO()
+        c = canvas.Canvas(buffer, pagesize=A4)
+        width, height = A4
+        x_left = 20 * mm
+        y = height - 20 * mm
+        line_gap = 7 * mm
+
+        def draw_line(lbl, val):
+            nonlocal y
+            text = f"{lbl}: {val if val not in [None, ''] else 'N/A'}"
+            c.drawString(x_left, y, text[:110])  # simple clipping
+            y -= line_gap
+
+        c.setTitle(f"Report {report_dict.get('id', '')}")
+        c.setFont("Helvetica-Bold", 14)
+        c.drawString(x_left, y, f"Tekeze Hydropower Plant - Maintenance Report")
+        y -= line_gap * 1.5
+        c.setFont("Helvetica", 11)
+
+        sections = [
+            ("Report ID", report_dict.get('id', '')),
+            ("Reporter", report_dict.get('reporter', '')),
+            ("Report Date", report_dict.get('report_date', '')),
+            ("Functional Location", report_dict.get('functional_location', '')),
+            ("Specific Location", report_dict.get('specific_location', '')),
+            ("Maintenance Type", report_dict.get('maintenance_type', '')),
+            ("Equipment", report_dict.get('equipment', '')),
+            ("Affected Part", report_dict.get('affected_part', '')),
+            ("Condition Observed", report_dict.get('condition_observed', '')),
+            ("Diagnosis", report_dict.get('diagnosis', '')),
+            ("Damage Type", report_dict.get('damage_type', '')),
+            ("Action Taken", report_dict.get('action_taken', '')),
+            ("Status", report_dict.get('status', '')),
+            ("Safety Condition", report_dict.get('safety_condition', '')),
+            ("Planned Activities", report_dict.get('planned_activities', '')),
+            ("Actual Activities Done", report_dict.get('actual_activities', '')),
+            ("Manpower Used", report_dict.get('manpower_used', '')),
+            ("Total Time Used (hours)", report_dict.get('total_time', '')),
+            ("Planned Manpower", report_dict.get('planned_manpower', '')),
+            ("Planned Time", report_dict.get('planned_time', '')),
+        ]
+
+        for lbl, val in sections:
+            # Make multiline for long fields
+            if isinstance(val, str) and len(val) > 110:
+                # split about every 100 chars
+                first = True
+                while val:
+                    part = val[:100]
+                    draw_line(lbl if first else "", part)
+                    val = val[100:]
+                    first = False
+            else:
+                draw_line(lbl, val)
+
+            if y < 30 * mm:
+                c.showPage()
+                y = height - 20 * mm
+                c.setFont("Helvetica", 11)
+
+        # Attached file info
+        attached = report_dict.get('attached_file', {})
+        if attached:
+            if y < 40 * mm:
+                c.showPage()
+                y = height - 20 * mm
+                c.setFont("Helvetica", 11)
+            c.setFont("Helvetica-Bold", 12)
+            c.drawString(x_left, y, "Attachment")
+            y -= line_gap
+            c.setFont("Helvetica", 11)
+            draw_line("File Name", attached.get('filename', ''))
+            draw_line("File Type", attached.get('filetype', ''))
+
+        c.showPage()
+        c.save()
+        buffer.seek(0)
+        return buffer.read()
+
+    # Fallback: very simple pseudo-PDF (still a valid PDF header/body, minimal content)
+    # Note: This is intentionally tiny; for best results, add 'reportlab' to your environment.
+    text_content = []
+    for k, v in report_dict.items():
+        if k == 'attached_file':
+            af = v or {}
+            text_content.append(f"{k}.filename: {af.get('filename','')}")
+            text_content.append(f"{k}.filetype: {af.get('filetype','')}")
+        else:
+            text_content.append(f"{k}: {v}")
+    content_str = "\n".join(text_content)
+    fake_pdf = f"%PDF-1.1\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n2 0 obj<</Type/Pages/Count 1/Kids[3 0 R]>>endobj\n3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 612 792]/Contents 4 0 R/Resources<<>> >>endobj\n4 0 obj<</Length {len(content_str)+35}>>stream\nBT /F1 12 Tf 72 720 Td ({content_str[:1000]}) Tj ET\nendstream\nendobj\nxref\n0 5\n0000000000 65535 f \n0000000010 00000 n \n0000000060 00000 n \n0000000115 00000 n \n0000000270 00000 n \ntrailer<</Size 5/Root 1 0 R>>\nstartxref\n400\n%%EOF"
+    return fake_pdf.encode("latin-1", errors="ignore")
 
 # --- User Authentication & Management Functions ---
 
@@ -102,9 +242,15 @@ def change_password(username, old_password, new_password):
 # --- Data Handling Functions for Firestore ---
 
 def insert_report(data):
-    """Inserts a new maintenance report into the Firestore database."""
+    """Inserts a new maintenance report into the Firestore database with a sequential ID (NEW)."""
     try:
-        st.session_state.db.collection('maintenance_reports').add(data)
+        # Assign sequential ID
+        new_id = _get_next_report_id()
+        data['id'] = new_id  # keep inside document as well
+        data['report_id'] = new_id  # optional alias
+
+        # Write document with custom ID
+        st.session_state.db.collection('maintenance_reports').document(new_id).set(data)
         return True
     except Exception as e:
         st.error(f"Failed to submit report: {e}")
@@ -118,6 +264,16 @@ def update_report(report_id, planned_manpower, planned_time):
             'planned_manpower': planned_manpower,
             'planned_time': planned_time
         })
+        return True
+    except Exception as e:
+        st.error(f"Failed to update report: {e}")
+        return False
+
+def update_full_report(report_id, updated_fields):
+    """Updates full editable fields of a report (for reporters to edit their own) (NEW)."""
+    try:
+        report_ref = st.session_state.db.collection('maintenance_reports').document(report_id)
+        report_ref.update(updated_fields)
         return True
     except Exception as e:
         st.error(f"Failed to update report: {e}")
@@ -148,7 +304,7 @@ def get_reports(username=None):
     reports_list = []
     for doc in query.stream():
         report = doc.to_dict()
-        report['id'] = doc.id
+        report['id'] = doc.id  # ensure ID reflects custom ID
         reports_list.append(report)
     
     return pd.DataFrame(reports_list)
@@ -246,13 +402,25 @@ def calculate_metrics(df):
     df_metrics['Efficiency (%)'] = df_metrics.apply(
         lambda row: (row['Actual Weight'] / row['Given Weight']) * 100 if row['Given Weight'] > 0 else 0, axis=1
     )
+
+    # --- NEW: expose attachment columns for manager visibility & CSV ---
+    df_metrics['attached_file_filename'] = df_metrics.get('attached_file', pd.Series([{}]*len(df_metrics))).apply(
+        lambda f: (f or {}).get('filename') if isinstance(f, dict) else None
+    )
+    df_metrics['attached_file_filetype'] = df_metrics.get('attached_file', pd.Series([{}]*len(df_metrics))).apply(
+        lambda f: (f or {}).get('filetype') if isinstance(f, dict) else None
+    )
+    df_metrics['attached_file_data_b64'] = df_metrics.get('attached_file', pd.Series([{}]*len(df_metrics))).apply(
+        lambda f: (f or {}).get('data_b64') if isinstance(f, dict) else None
+    )
     
     cols = ['id', 'reporter', 'report_date', 'functional_location', 'specific_location',
             'maintenance_type', 'equipment', 'affected_part',
             'condition_observed', 'diagnosis', 'damage_type', 'action_taken',
             'status', 'safety_condition',
             'planned_activities', 'actual_activities', 'manpower_used', 'total_time',
-            'planned_manpower', 'planned_time', 'Given Weight', 'Actual Weight', 'Efficiency (%)']
+            'planned_manpower', 'planned_time', 'Given Weight', 'Actual Weight', 'Efficiency (%)',
+            'attached_file_filename', 'attached_file_filetype', 'attached_file_data_b64']
     
     return df_metrics[cols]
 
@@ -268,6 +436,16 @@ def show_detailed_report(report_id, df):
     report = df[df['id'] == report_id].iloc[0]
     st.header(f"Report Details: {report['id']}")
     
+    # --- NEW: Download this report as PDF ---
+    pdf_bytes = _report_to_pdf_bytes(report.to_dict())
+    st.download_button(
+        label="📄 Download Report as PDF",
+        data=pdf_bytes,
+        file_name=f"report_{report['id']}.pdf",
+        mime="application/pdf",
+        key=f"pdf_dl_{report['id']}"
+    )
+
     if st.button("⬅️ Back to Reports"):
         st.session_state.selected_report_id = None
         st.rerun()
@@ -310,18 +488,19 @@ def show_detailed_report(report_id, df):
                 st.info(f"File: {file_info['filename']} ({file_info['filetype']})")
             
             st.download_button(
-                label="Download File",
+                label="Download Attached File",
                 data=file_bytes,
                 file_name=file_info['filename'],
-                mime=file_info['filetype']
+                mime=file_info['filetype'],
+                key=f"dl_{report_id}"
             )
         except (base64.binascii.Error, TypeError) as e:
             st.warning(f"Could not display attached file. Data may be corrupted. {e}")
 
     # --- Comments Section ---
     st.subheader("Comments")
-    comment_box = st.text_area("Add a comment:", key="comment_box")
-    if st.button("Post Comment", key="post_comment_button"):
+    comment_box = st.text_area("Add a comment:", key=f"comment_box_{report_id}")
+    if st.button("Post Comment", key=f"post_comment_button_{report_id}"):
         if comment_box:
             add_comment_to_report(report_id, st.session_state.user['username'], comment_box)
             st.rerun()
@@ -522,9 +701,11 @@ def show_report_form():
                 if len(file_bytes) > 1024 * 1024:
                     st.error("❌ The attached file is too large. Please upload a file smaller than 1 MB.")
                 else:
+                    # NEW: ensure filename is not a long path
+                    safe_name = os.path.basename(uploaded_file.name)
                     encoded_string = base64.b64encode(file_bytes).decode('utf-8')
                     report_data['attached_file'] = {
-                        'filename': uploaded_file.name,
+                        'filename': safe_name,
                         'filetype': uploaded_file.type,
                         'data_b64': encoded_string
                     }
@@ -539,7 +720,7 @@ def show_report_form():
                     st.error("❌ Failed to submit report. Please try again.")
 
 def show_my_reports(username):
-    """Displays a table of the user's submitted reports with search and filter."""
+    """Displays a table of the user's submitted reports with search and filter, plus edit/delete (NEW)."""
     
     st.subheader("My Reports")
     
@@ -559,9 +740,9 @@ def show_my_reports(username):
             st.markdown("---")
             st.subheader("All My Submitted Reports")
             
-            # Use st.expander to show all submitted details for each report
+            # Use st.expander to show details, edit, delete for each report
             for index, row in filtered_df.iterrows():
-                with st.expander(f"Report for: {row['equipment']} on {row['report_date']} by {row['reporter']}", expanded=False):
+                with st.expander(f"[{row['id']}] {row['equipment']} — {row['report_date']}", expanded=False):
                     col1, col2 = st.columns(2)
                     with col1:
                         st.write(f"**Report ID:** {row['id']}")
@@ -581,6 +762,81 @@ def show_my_reports(username):
                         st.write(f"**Actual Activities Done:** {row['actual_activities']}")
                         st.write(f"**Manpower Used:** {row['manpower_used']}")
                         st.write(f"**Total Time Used (hours):** {row['total_time']}")
+                        if 'attached_file' in row and row['attached_file']:
+                            st.write(f"**Attached File:** {row['attached_file'].get('filename')}")
+
+                    # --- NEW: Edit form for reporter ---
+                    with st.form(key=f"edit_form_{row['id']}"):
+                        st.markdown("**Edit Your Report**")
+                        e_start_date = st.date_input("Date of duty start", datetime.date.fromisoformat(row['report_date']) if row.get('report_date') else datetime.date.today(), key=f"ed_date_{row['id']}")
+                        e_functional_location = st.selectbox("Functional Location", ["Powerhouse", "Dam", "Switch Yard", "Access road", "Garage", "Dwelling"], index=max(0, ["Powerhouse", "Dam", "Switch Yard", "Access road", "Garage", "Dwelling"].index(row['functional_location']) if row.get('functional_location') in ["Powerhouse", "Dam", "Switch Yard", "Access road", "Garage", "Dwelling"] else 0), key=f"ed_funloc_{row['id']}")
+                        e_specific_location = st.selectbox("Specific Location", ["Unit 1", "Unit 2", "Unit 3", "Unit 4", "Common system", "Spillway", "Intake gate", "Trash rack crane", "Diesel generator", "Bonnet gate", "Substation", "SYD control room", "Step down transformer", "Water supply", "Road", "Employee camp", "China camp", "Wanboo camp", "Garage", "Others"], index=max(0, ["Unit 1", "Unit 2", "Unit 3", "Unit 4", "Common system", "Spillway", "Intake gate", "Trash rack crane", "Diesel generator", "Bonnet gate", "Substation", "SYD control room", "Step down transformer", "Water supply", "Road", "Employee camp", "China camp", "Wanboo camp", "Garage", "Others"].index(row['specific_location']) if row.get('specific_location') in ["Unit 1", "Unit 2", "Unit 3", "Unit 4", "Common system", "Spillway", "Intake gate", "Trash rack crane", "Diesel generator", "Bonnet gate", "Substation", "SYD control room", "Step down transformer", "Water supply", "Road", "Employee camp", "China camp", "Wanboo camp", "Garage", "Others"] else 0), key=f"ed_specloc_{row['id']}")
+                        e_maintenance_type = st.selectbox("Maintenance Type", ["Inspection", "Preventive Maintenance", "Emergency/Breakdown/Corrective"], index=max(0, ["Inspection", "Preventive Maintenance", "Emergency/Breakdown/Corrective"].index(row['maintenance_type']) if row.get('maintenance_type') in ["Inspection", "Preventive Maintenance", "Emergency/Breakdown/Corrective"] else 0), key=f"ed_mtype_{row['id']}")
+                        e_equipment = st.text_input("Name of Equipment", value=row.get('equipment', ''), key=f"ed_eq_{row['id']}")
+                        e_affected_part = st.text_input("Affected Part", value=row.get('affected_part', ''), key=f"ed_aff_{row['id']}")
+                        e_condition_observed = st.text_area("Condition Observed", value=row.get('condition_observed', ''), key=f"ed_cond_{row['id']}")
+                        e_diagnosis = st.text_area("Diagnosis", value=row.get('diagnosis', ''), key=f"ed_diag_{row['id']}")
+                        e_damage_type = st.text_input("Damage Type", value=row.get('damage_type', ''), key=f"ed_dmg_{row['id']}")
+                        e_action_taken = st.text_area("Action Taken", value=row.get('action_taken', ''), key=f"ed_act_{row['id']}")
+                        e_status = st.selectbox("Status", ["Fully functional", "Functional but needs monitoring", "Temporarily functional (risk present)", "Not functional"], index=max(0, ["Fully functional", "Functional but needs monitoring", "Temporarily functional (risk present)", "Not functional"].index(row['status']) if row.get('status') in ["Fully functional", "Functional but needs monitoring", "Temporarily functional (risk present)", "Not functional"] else 0), key=f"ed_status_{row['id']}")
+                        e_safety_condition = st.selectbox("Safety Condition", ["Safely completed", "Unsafe condition was observed", "Maintenance planform was not good"], index=max(0, ["Safely completed", "Unsafe condition was observed", "Maintenance planform was not good"].index(row['safety_condition']) if row.get('safety_condition') in ["Safely completed", "Unsafe condition was observed", "Maintenance planform was not good"] else 0), key=f"ed_safe_{row['id']}")
+                        e_planned_activities = st.number_input("Planned Activities", min_value=0, step=1, value=int(row.get('planned_activities', 0)), key=f"ed_plact_{row['id']}")
+                        e_manpower_used = st.number_input("Manpower Used", min_value=0, step=1, value=int(row.get('manpower_used', 0)), key=f"ed_manu_{row['id']}")
+                        e_total_time = st.number_input("Total Time Used (hours)", min_value=0.0, step=0.5, value=float(row.get('total_time', 0.0)), key=f"ed_ttime_{row['id']}")
+                        e_actual_activities = st.number_input("Actual Activities Done", min_value=0, step=1, value=int(row.get('actual_activities', 0)), key=f"ed_actact_{row['id']}")
+
+                        # Optional: replace attachment when editing
+                        e_uploaded_file = st.file_uploader("Replace Attachment (optional)", type=["jpg", "jpeg", "png", "pdf"], key=f"ed_upload_{row['id']}")
+
+                        save_changes = st.form_submit_button("💾 Save Changes")
+                        if save_changes:
+                            updated = {
+                                'report_date': e_start_date.isoformat(),
+                                'functional_location': e_functional_location,
+                                'specific_location': e_specific_location,
+                                'maintenance_type': e_maintenance_type,
+                                'equipment': e_equipment,
+                                'affected_part': e_affected_part,
+                                'condition_observed': e_condition_observed,
+                                'diagnosis': e_diagnosis,
+                                'damage_type': e_damage_type,
+                                'action_taken': e_action_taken,
+                                'status': e_status,
+                                'safety_condition': e_safety_condition,
+                                'planned_activities': int(e_planned_activities),
+                                'manpower_used': int(e_manpower_used),
+                                'total_time': float(e_total_time),
+                                'actual_activities': int(e_actual_activities),
+                            }
+                            if e_uploaded_file is not None:
+                                bytes_new = e_uploaded_file.getvalue()
+                                if len(bytes_new) > 1024 * 1024:
+                                    st.error("❌ The attached file is too large. Please upload a file smaller than 1 MB.")
+                                else:
+                                    updated['attached_file'] = {
+                                        'filename': os.path.basename(e_uploaded_file.name),
+                                        'filetype': e_uploaded_file.type,
+                                        'data_b64': base64.b64encode(bytes_new).decode('utf-8')
+                                    }
+                            if update_full_report(row['id'], updated):
+                                st.success("✅ Report updated.")
+                                st.rerun()
+                            else:
+                                st.error("❌ Failed to update report.")
+
+                    # --- NEW: Delete button for reporter ---
+                    del_col1, del_col2 = st.columns(2)
+                    with del_col1:
+                        if st.button("🗑️ Delete This Report", key=f"del_{row['id']}"):
+                            if delete_report(row['id']):
+                                st.success(f"Report {row['id']} deleted.")
+                                st.rerun()
+                            else:
+                                st.error("❌ Delete failed.")
+                    with del_col2:
+                        if st.button("🔍 View Details", key=f"view_{row['id']}"):
+                            st.session_state.selected_report_id = row['id']
+                            st.rerun()
 
             st.markdown("---")
             # CSV download link for reporters
@@ -649,10 +905,12 @@ def show_manager_dashboard():
                 edited_df[['id', 'reporter', 'report_date', 'functional_location', 'equipment',
                            'planned_manpower', 'planned_time', 'manpower_used', 'total_time', 
                            'actual_activities', 'action_taken',
-                           'Given Weight', 'Actual Weight', 'Efficiency (%)']],
+                           'Given Weight', 'Actual Weight', 'Efficiency (%)',
+                           'attached_file_filename', 'attached_file_filetype']],
                 disabled=('id', 'reporter', 'report_date', 'functional_location', 'equipment',
                           'manpower_used', 'total_time', 'actual_activities', 'action_taken',
-                          'Given Weight', 'Actual Weight', 'Efficiency (%)'),
+                          'Given Weight', 'Actual Weight', 'Efficiency (%)',
+                          'attached_file_filename', 'attached_file_filetype'),
                 hide_index=True,
                 use_container_width=True,
                 key="manager_data_editor"
@@ -689,8 +947,8 @@ def show_manager_dashboard():
             # --- CSV Export with Metrics at the end ---
             st.markdown("---")
             st.subheader("Download All Reports")
-            
-            # Create the main CSV string
+
+            # Include attachment info in the exported CSV (already part of df_metrics)
             main_csv_string = df_metrics.to_csv(index=False)
             
             # Create a summary DataFrame
@@ -713,7 +971,6 @@ def show_manager_dashboard():
             st.markdown(href_full, unsafe_allow_html=True)
             # --- End CSV Export ---
             
-
         else:
             st.info("No reports found matching your search and filter criteria.")
 
@@ -767,6 +1024,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
