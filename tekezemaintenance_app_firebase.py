@@ -162,7 +162,7 @@ def _report_to_pdf_bytes(report_dict) -> bytes:
                 y = height - 20 * mm
                 c.setFont("Helvetica", 11)
 
-        # Attached file info
+                # Attached file info
         attached = report_dict.get('attached_file', {})
         if attached:
             if y < 40 * mm:
@@ -173,8 +173,15 @@ def _report_to_pdf_bytes(report_dict) -> bytes:
             c.drawString(x_left, y, "Attachment")
             y -= line_gap
             c.setFont("Helvetica", 11)
-            draw_line("File Name", attached.get('filename', 'N/A') if isinstance(attached, dict) else str(attached), bullet=True)
-            draw_line("File Type", attached.get('filetype', 'N/A') if isinstance(attached, dict) else "", bullet=True)
+
+            if isinstance(attached, dict):
+                # normal expected case
+                draw_line("File Name", attached.get('filename', 'N/A'), bullet=True)
+                draw_line("File Type", attached.get('filetype', 'N/A'), bullet=True)
+            else:
+                # fallback if attached_file is not a dict
+                draw_line("File", str(attached), bullet=True)
+
 
         c.showPage()
         c.save()
@@ -1028,6 +1035,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
