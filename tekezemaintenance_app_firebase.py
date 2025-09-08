@@ -104,11 +104,16 @@ def _report_to_pdf_bytes(report_dict) -> bytes:
         y = height - 20 * mm
         line_gap = 7 * mm
 
-        def draw_line(lbl, val):
-            nonlocal y
-            text = f"{lbl}: {val if val not in [None, ''] else 'N/A'}"
-            c.drawString(x_left, y, text[:110])  # simple clipping
-            y -= line_gap
+       import textwrap
+
+def draw_line(lbl, val):
+    nonlocal y
+    text = f"{lbl}: {val if val not in [None, ''] else 'N/A'}"
+    wrapped_lines = textwrap.wrap(text, width=90)  # adjust width to fit page
+    for i, line in enumerate(wrapped_lines):
+        c.drawString(x_left, y, line)
+        y -= line_gap
+
 
         c.setTitle(f"Report {report_dict.get('id', '')}")
         c.setFont("Helvetica-Bold", 14)
@@ -1023,6 +1028,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
