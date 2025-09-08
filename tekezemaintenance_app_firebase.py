@@ -69,7 +69,6 @@ def _initialize_counter_if_needed(transaction, db):
         # Initialize based on current count to avoid clashes with existing docs
         current_count = len(list(db.collection('maintenance_reports').stream()))
         transaction.set(counter_ref, {'current': int(current_count)})
-
 def _get_next_report_id():
     """
     Atomically increments and returns the next 5-digit report ID as a zero-padded string.
@@ -1024,6 +1023,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
