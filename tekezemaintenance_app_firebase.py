@@ -494,15 +494,48 @@ def display_attached_file(report, report_id):
     It handles various file types and provides better error handling.
 
     Args:
-…        # Handle case where 'attached_file' is missing or not a dictionary (e.g., a float)
+        report (dict): A dictionary containing the report data, including 'attached_file'.
+        report_id (str): A unique identifier for the report, used for the download button key.
+    """
+    
+    # Check if the 'attached_file' key exists and its value is valid
+    if 'attached_file' in report and isinstance(report['attached_file'], dict):
+        file_info = report['attached_file']
+        
+        # Check for required keys within the file_info dictionary
+        if all(key in file_info for key in ['data_b64', 'filetype', 'filename']):
+            st.subheader("Attached File")
+            
+            try:
+                # Decode the base64 data to bytes
+                file_bytes = base64.b64decode(file_info['data_b64'])
+                
+                # Check if the file is an image and display it
+                if file_info['filetype'].startswith('image'):
+                    st.image(file_bytes, caption=file_info['filename'])
+                else:
+                    # For all other file types, display the file name and type
+                    st.info(f"File: **{file_info['filename']}** ({file_info['filetype']})")
+                
+                # Provide a universal download button for all file types
+                st.download_button(
+                    label="Download Attached File",
+                    data=file_bytes,
+                    file_name=file_info['filename'],
+                    mime=file_info['filetype'],
+                    key=f"dl_{report_id}"
+                )
+                
+            except (base64.binascii.Error, TypeError, ValueError) as e:
+                # Catch decoding or other data-related errors
+                st.error(f"Could not display attached file. The data may be corrupted or invalid. Details: {e}")
+                
+        else:
+            # Handle case where file_info is a dictionary but is missing keys
+            st.warning("Could not display attached file. File information is incomplete.")
+    else:
+        # Handle case where 'attached_file' is missing or not a dictionary (e.g., a float)
         st.info("No attached file found for this report.")
-    # --- Comments Section ---
-    st.subheader("Comments")
-    comment_box = st.text_area("Add a comment:", key=f"comment_box_{report_id}")
-    if st.button("Post Comment", key=f"post_comment_button_{report_id}"):
-        if comment_box:
-            add_comment_to_report(report_id, st.session_state.user['username'], comment_box)
-            st.rerun()
 
     # Display comments in real-time
     comments = get_comments_for_report(report_id)
@@ -1023,6 +1056,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
